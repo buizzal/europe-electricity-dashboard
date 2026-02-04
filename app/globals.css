@@ -1,0 +1,94 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --foreground-rgb: 0, 0, 0;
+  --background-start-rgb: 248, 250, 252;
+  --background-end-rgb: 241, 245, 249;
+}
+
+body {
+  color: rgb(var(--foreground-rgb));
+  background: linear-gradient(
+    to bottom,
+    rgb(var(--background-start-rgb)),
+    rgb(var(--background-end-rgb))
+  );
+  min-height: 100vh;
+}
+
+/* Custom scrollbar */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: #f1f5f9;
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #cbd5e1;
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #94a3b8;
+}
+
+/* Map styles */
+.country-path {
+  cursor: pointer;
+  stroke: #e2e8f0;
+  stroke-width: 0.5;
+  transition: all 0.2s ease;
+}
+
+.country-path:hover {
+  stroke: #3b82f6;
+  stroke-width: 1.5;
+}
+
+.country-path.selected {
+  stroke: #2563eb;
+  stroke-width: 2;
+}
+
+/* Card animations */
+.card {
+  @apply bg-white rounded-xl shadow-sm border border-slate-200 transition-all duration-200;
+}
+
+.card:hover {
+  @apply shadow-md;
+}
+
+/* Stat card */
+.stat-card {
+  @apply p-4 rounded-lg bg-gradient-to-br;
+}
+
+/* Loading spinner */
+.spinner {
+  animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* Chart tooltip */
+.recharts-tooltip-wrapper {
+  outline: none !important;
+}
+
+.custom-tooltip {
+  @apply bg-white p-3 rounded-lg shadow-lg border border-slate-200;
+}

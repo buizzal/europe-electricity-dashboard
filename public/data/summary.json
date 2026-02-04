@@ -1,0 +1,219 @@
+{
+  "AUT": {
+    "name": "Austria",
+    "iso2": "AT",
+    "currentPrice": 154,
+    "avgPrice7d": 143.09,
+    "avgCarbon7d": 213.98
+  },
+  "BEL": {
+    "name": "Belgium",
+    "iso2": "BE",
+    "currentPrice": 110.54,
+    "avgPrice7d": 117.76,
+    "avgCarbon7d": 143.59
+  },
+  "BGR": {
+    "name": "Bulgaria",
+    "iso2": "BG",
+    "currentPrice": 100.19,
+    "avgPrice7d": 135.55,
+    "avgCarbon7d": 418.67
+  },
+  "CHE": {
+    "name": "Switzerland",
+    "iso2": "CH",
+    "currentPrice": 98.46,
+    "avgPrice7d": 102.78,
+    "avgCarbon7d": 58.86
+  },
+  "CZE": {
+    "name": "Czechia",
+    "iso2": "CZ",
+    "currentPrice": 156.57,
+    "avgPrice7d": 135.53,
+    "avgCarbon7d": 524.54
+  },
+  "DEU": {
+    "name": "Germany",
+    "iso2": "DE",
+    "currentPrice": 99.14,
+    "avgPrice7d": 120.85,
+    "avgCarbon7d": 373.81
+  },
+  "DNK": {
+    "name": "Denmark",
+    "iso2": "DK",
+    "currentPrice": 139.43,
+    "avgPrice7d": 114.79,
+    "avgCarbon7d": 85.12
+  },
+  "ESP": {
+    "name": "Spain",
+    "iso2": "ES",
+    "currentPrice": 108.8,
+    "avgPrice7d": 22.53,
+    "avgCarbon7d": 118.14
+  },
+  "EST": {
+    "name": "Estonia",
+    "iso2": "EE",
+    "currentPrice": 478.88,
+    "avgPrice7d": 223.43,
+    "avgCarbon7d": 585
+  },
+  "FIN": {
+    "name": "Finland",
+    "iso2": "FI",
+    "currentPrice": 478.41,
+    "avgPrice7d": 208.8,
+    "avgCarbon7d": 77.66
+  },
+  "FRA": {
+    "name": "France",
+    "iso2": "FR",
+    "currentPrice": 108.8,
+    "avgPrice7d": 108,
+    "avgCarbon7d": 31.17
+  },
+  "GBR": {
+    "name": "United Kingdom",
+    "iso2": "GB",
+    "currentPrice": 115.8,
+    "avgPrice7d": 118.75,
+    "avgCarbon7d": 226.89
+  },
+  "GRC": {
+    "name": "Greece",
+    "iso2": "GR",
+    "currentPrice": 126.03,
+    "avgPrice7d": 108.84,
+    "avgCarbon7d": 272.83
+  },
+  "HRV": {
+    "name": "Croatia",
+    "iso2": "HR",
+    "currentPrice": 170.21,
+    "avgPrice7d": 141.03,
+    "avgCarbon7d": 205.18
+  },
+  "HUN": {
+    "name": "Hungary",
+    "iso2": "HU",
+    "currentPrice": 189.26,
+    "avgPrice7d": 147.72,
+    "avgCarbon7d": 238.29
+  },
+  "IRL": {
+    "name": "Ireland",
+    "iso2": "IE",
+    "currentPrice": 88.04,
+    "avgPrice7d": 126.48,
+    "avgCarbon7d": 324.64
+  },
+  "ITA": {
+    "name": "Italy",
+    "iso2": "IT",
+    "currentPrice": 153.47,
+    "avgPrice7d": 140.19,
+    "avgCarbon7d": 299.19
+  },
+  "LTU": {
+    "name": "Lithuania",
+    "iso2": "LT",
+    "currentPrice": 478.88,
+    "avgPrice7d": 213.8,
+    "avgCarbon7d": 168.98
+  },
+  "LUX": {
+    "name": "Luxembourg",
+    "iso2": "LU",
+    "currentPrice": 99.14,
+    "avgPrice7d": 120.85,
+    "avgCarbon7d": 202.87
+  },
+  "LVA": {
+    "name": "Latvia",
+    "iso2": "LV",
+    "currentPrice": 478.88,
+    "avgPrice7d": 213.42,
+    "avgCarbon7d": 188.63
+  },
+  "MKD": {
+    "name": "North Macedonia",
+    "iso2": "MK",
+    "currentPrice": 102.56,
+    "avgPrice7d": 104.43,
+    "avgCarbon7d": 533.01
+  },
+  "MNE": {
+    "name": "Montenegro",
+    "iso2": "ME",
+    "currentPrice": 104,
+    "avgPrice7d": 112.51,
+    "avgCarbon7d": 686.46
+  },
+  "NLD": {
+    "name": "Netherlands",
+    "iso2": "NL",
+    "currentPrice": 107.22,
+    "avgPrice7d": 116.94,
+    "avgCarbon7d": 283.72
+  },
+  "NOR": {
+    "name": "Norway",
+    "iso2": "NO",
+    "currentPrice": 136.49,
+    "avgPrice7d": 115.13,
+    "avgCarbon7d": 9.11
+  },
+  "POL": {
+    "name": "Poland",
+    "iso2": "PL",
+    "currentPrice": 165.37,
+    "avgPrice7d": 154.55,
+    "avgCarbon7d": 692.71
+  },
+  "PRT": {
+    "name": "Portugal",
+    "iso2": "PT",
+    "currentPrice": 0,
+    "avgPrice7d": 14.58,
+    "avgCarbon7d": 82.31
+  },
+  "ROU": {
+    "name": "Romania",
+    "iso2": "RO",
+    "currentPrice": 189.09,
+    "avgPrice7d": 142.58,
+    "avgCarbon7d": 323.21
+  },
+  "SRB": {
+    "name": "Serbia",
+    "iso2": "RS",
+    "currentPrice": 100.27,
+    "avgPrice7d": 95.25,
+    "avgCarbon7d": 492.71
+  },
+  "SVK": {
+    "name": "Slovakia",
+    "iso2": "SK",
+    "currentPrice": 183.22,
+    "avgPrice7d": 143.68,
+    "avgCarbon7d": 279.58
+  },
+  "SVN": {
+    "name": "Slovenia",
+    "iso2": "SI",
+    "currentPrice": 137.67,
+    "avgPrice7d": 139.39,
+    "avgCarbon7d": 213.96
+  },
+  "SWE": {
+    "name": "Sweden",
+    "iso2": "SE",
+    "currentPrice": 130.78,
+    "avgPrice7d": 117.29,
+    "avgCarbon7d": 1.79
+  }
+}
