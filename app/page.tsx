@@ -22,12 +22,14 @@ export default function Home() {
   const [selectedCountry, setSelectedCountry] = useState<string | null>(null)
   const [summaryData, setSummaryData] = useState<SummaryData | null>(null)
   const [loading, setLoading] = useState(true)
+  const [lastUpdated, setLastUpdated] = useState<string | null>(null)
 
   useEffect(() => {
     fetch('/data/summary.json')
       .then(res => res.json())
       .then(data => {
         setSummaryData(data)
+        setLastUpdated(new Date().toISOString())
         setLoading(false)
       })
       .catch(err => {
@@ -129,6 +131,7 @@ export default function Home() {
                   summaryData={summaryData}
                   selectedCountry={selectedCountry}
                   onSelectCountry={setSelectedCountry}
+                  lastUpdated={lastUpdated}
                 />
               )}
 
@@ -186,9 +189,14 @@ export default function Home() {
         {/* Footer */}
         <footer className="mt-12 pt-6 border-t border-slate-200">
           <div className="flex flex-col md:flex-row items-center justify-between gap-4 text-sm text-slate-500">
-            <p>
-              Data sources: ENTSO-E, EEA, European Commission
-            </p>
+            <div className="flex flex-wrap items-center gap-2">
+              <span>Data sources:</span>
+              <a href="https://transparency.entsoe.eu/" target="_blank" rel="noopener noreferrer" className="text-blue-500 hover:underline">ENTSO-E</a>
+              <span>•</span>
+              <a href="https://www.electricitymaps.com/" target="_blank" rel="noopener noreferrer" className="text-blue-500 hover:underline">Electricity Maps</a>
+              <span>•</span>
+              <a href="https://ember-energy.org/" target="_blank" rel="noopener noreferrer" className="text-blue-500 hover:underline">Ember</a>
+            </div>
             <p>
               Built for analyzing the value of electricity demand flexibility
             </p>

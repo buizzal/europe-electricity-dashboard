@@ -6,16 +6,18 @@ An interactive dashboard for visualizing European electricity prices, carbon emi
 
 ## Features
 
-- **Interactive Europe Map**: Click on any country to view detailed electricity data
+- **Interactive GeoJSON Map**: Zoomable, pannable map of Europe with hover tooltips
 - **Real-time Price Visualization**: Hourly and daily electricity prices in EUR/MWh
 - **Carbon Intensity Tracking**: Daily carbon intensity data (gCO₂/kWh)
 - **Flexibility Value Calculator**: Calculate potential cost and carbon savings from load shifting
 - **Multiple Time Windows**: Analyze flexibility value for 1h, 2h, 4h, and 8h shifting windows
+- **Last Updated Timestamps**: See when data was last refreshed
 
 ## Data Sources
 
-- **Electricity Prices**: Day-ahead market prices from European power exchanges (2015-2026)
-- **Carbon Intensity**: Power sector carbon intensity from environmental agencies (2015-2024)
+- **[ENTSO-E Transparency Platform](https://transparency.entsoe.eu/)**: Day-ahead market prices from European power exchanges
+- **[Electricity Maps](https://www.electricitymaps.com/)**: Real-time carbon intensity data
+- **[Ember](https://ember-energy.org/)**: European wholesale electricity price data
 
 ## Countries Covered
 
@@ -44,6 +46,21 @@ npm run dev
 
 Open [http://localhost:3000](http://localhost:3000) in your browser.
 
+### Environment Variables (Optional)
+
+For live data from external APIs, create a `.env.local` file:
+
+```bash
+cp .env.example .env.local
+```
+
+Then add your API keys:
+
+- **Electricity Maps**: Get a free API key at [electricitymaps.com/free-tier-api](https://www.electricitymaps.com/free-tier-api)
+- **ENTSO-E**: Register at [transparency.entsoe.eu](https://transparency.entsoe.eu/) and email transparency@entsoe.eu with subject "Restful API access"
+
+The dashboard works without API keys using the bundled static data.
+
 ### Building for Production
 
 ```bash
@@ -61,24 +78,28 @@ Or manually:
 
 1. Push this repository to GitHub
 2. Import the project in [Vercel](https://vercel.com/new)
-3. Vercel will automatically detect Next.js and configure the build
+3. Add environment variables in Vercel dashboard (optional, for live data)
 4. Deploy!
 
 ## Project Structure
 
 ```
 ├── app/
-│   ├── layout.tsx      # Root layout
-│   ├── page.tsx        # Main page component
-│   └── globals.css     # Global styles
+│   ├── api/                # API routes for live data
+│   │   └── carbon-intensity/
+│   ├── layout.tsx          # Root layout
+│   ├── page.tsx            # Main page component
+│   └── globals.css         # Global styles
 ├── components/
-│   ├── EuropeMap.tsx   # Interactive SVG map
-│   ├── Dashboard.tsx   # Charts and visualizations
+│   ├── EuropeMap.tsx       # Interactive GeoJSON map with zoom controls
+│   ├── Dashboard.tsx       # Charts and visualizations
 │   └── FlexibilityCalculator.tsx  # Value calculator
+├── lib/
+│   └── api-config.ts       # API configuration and zone mappings
 ├── public/
-│   └── data/           # Processed JSON data files
+│   └── data/               # Processed JSON data files
 ├── scripts/
-│   └── process-data.js # Data processing script
+│   └── process-data.js     # Data processing script
 └── package.json
 ```
 
@@ -101,8 +122,18 @@ For a 1 GWh daily load with 4-hour flexibility in Germany:
 - **Framework**: Next.js 14
 - **Styling**: Tailwind CSS
 - **Charts**: Recharts
+- **Maps**: react-simple-maps (GeoJSON/TopoJSON)
 - **Icons**: Lucide React
 - **Date Handling**: date-fns
+
+## API Integration
+
+The dashboard supports optional live data integration:
+
+| API | Data | Free Tier |
+|-----|------|-----------|
+| Electricity Maps | Carbon intensity, power breakdown | 1 zone, non-commercial |
+| ENTSO-E | Day-ahead prices, generation | Unlimited, requires registration |
 
 ## License
 

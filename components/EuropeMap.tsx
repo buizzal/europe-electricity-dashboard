@@ -1,6 +1,13 @@
 'use client'
 
-import React from 'react'
+import React, { useState, useCallback, useMemo } from 'react'
+import {
+  ComposableMap,
+  Geographies,
+  Geography,
+  ZoomableGroup,
+} from 'react-simple-maps'
+import { ZoomIn, ZoomOut, RotateCcw } from 'lucide-react'
 
 interface CountrySummary {
   name: string
@@ -14,136 +21,246 @@ interface EuropeMapProps {
   summaryData: { [iso3: string]: CountrySummary } | null
   selectedCountry: string | null
   onSelectCountry: (iso3: string) => void
+  lastUpdated?: string | null
 }
 
-// SVG paths for European countries (simplified)
-const COUNTRY_PATHS: { [iso3: string]: { d: string; cx: number; cy: number } } = {
-  'PRT': { d: 'M85,195 L95,195 L100,220 L90,240 L80,235 L80,210 Z', cx: 88, cy: 215 },
-  'ESP': { d: 'M95,195 L150,185 L160,195 L165,220 L140,240 L100,240 L90,240 L100,220 Z', cx: 130, cy: 210 },
-  'FRA': { d: 'M150,185 L185,155 L200,155 L210,175 L195,200 L165,220 L160,195 Z', cx: 180, cy: 180 },
-  'BEL': { d: 'M185,155 L200,150 L205,155 L200,155 Z', cx: 193, cy: 153 },
-  'NLD': { d: 'M195,140 L210,135 L210,150 L200,150 Z', cx: 203, cy: 143 },
-  'LUX': { d: 'M200,155 L205,155 L207,160 L202,160 Z', cx: 203, cy: 158 },
-  'DEU': { d: 'M200,150 L210,135 L245,130 L260,145 L250,170 L225,175 L210,175 L205,155 Z', cx: 230, cy: 155 },
-  'CHE': { d: 'M195,175 L210,175 L215,185 L200,190 Z', cx: 205, cy: 182 },
-  'ITA': { d: 'M215,185 L240,180 L260,195 L280,230 L260,260 L240,250 L225,210 L200,200 Z', cx: 245, cy: 220 },
-  'AUT': { d: 'M225,175 L250,170 L270,175 L265,185 L240,180 Z', cx: 247, cy: 177 },
-  'SVN': { d: 'M250,185 L265,185 L260,195 L245,192 Z', cx: 255, cy: 190 },
-  'HRV': { d: 'M260,195 L280,190 L290,210 L270,220 L260,200 Z', cx: 275, cy: 205 },
-  'HUN': { d: 'M270,175 L300,175 L310,190 L290,200 L270,195 Z', cx: 290, cy: 185 },
-  'SVK': { d: 'M270,165 L300,165 L300,175 L270,175 Z', cx: 285, cy: 170 },
-  'CZE': { d: 'M245,150 L260,145 L280,155 L270,165 L250,165 Z', cx: 262, cy: 157 },
-  'POL': { d: 'M260,125 L310,120 L320,155 L300,165 L280,155 L260,145 Z', cx: 290, cy: 140 },
-  'DNK': { d: 'M220,115 L235,105 L245,115 L235,125 L220,125 Z', cx: 232, cy: 115 },
-  'SWE': { d: 'M250,50 L275,40 L290,80 L275,120 L255,115 L240,75 Z', cx: 265, cy: 80 },
-  'NOR': { d: 'M220,30 L250,20 L260,50 L250,50 L240,75 L220,100 L200,80 L210,50 Z', cx: 230, cy: 55 },
-  'FIN': { d: 'M290,30 L320,25 L340,80 L320,120 L290,100 L290,60 Z', cx: 310, cy: 70 },
-  'EST': { d: 'M300,105 L325,100 L325,115 L300,115 Z', cx: 312, cy: 108 },
-  'LVA': { d: 'M300,115 L325,115 L325,130 L300,130 Z', cx: 312, cy: 122 },
-  'LTU': { d: 'M295,130 L320,130 L320,145 L295,145 Z', cx: 307, cy: 137 },
-  'GBR': { d: 'M140,110 L170,100 L175,130 L160,155 L145,145 L135,130 Z', cx: 155, cy: 125 },
-  'IRL': { d: 'M110,115 L135,110 L140,135 L125,145 L110,135 Z', cx: 125, cy: 125 },
-  'GRC': { d: 'M290,220 L320,215 L330,250 L305,270 L285,255 Z', cx: 305, cy: 240 },
-  'BGR': { d: 'M310,200 L350,195 L355,215 L325,220 L310,210 Z', cx: 332, cy: 207 },
-  'ROU': { d: 'M305,175 L350,170 L355,195 L310,200 L305,185 Z', cx: 330, cy: 185 },
-  'SRB': { d: 'M290,200 L310,200 L310,220 L295,225 L285,215 Z', cx: 298, cy: 212 },
-  'MNE': { d: 'M280,220 L290,218 L290,230 L280,230 Z', cx: 285, cy: 224 },
-  'MKD': { d: 'M295,225 L310,225 L312,240 L298,240 Z', cx: 303, cy: 232 },
+// Map ISO2 to ISO3 codes
+const ISO2_TO_ISO3: { [key: string]: string } = {
+  'AT': 'AUT', 'BE': 'BEL', 'BG': 'BGR', 'CH': 'CHE', 'CZ': 'CZE',
+  'DE': 'DEU', 'DK': 'DNK', 'ES': 'ESP', 'EE': 'EST', 'FI': 'FIN',
+  'FR': 'FRA', 'GB': 'GBR', 'GR': 'GRC', 'HR': 'HRV', 'HU': 'HUN',
+  'IE': 'IRL', 'IT': 'ITA', 'LT': 'LTU', 'LU': 'LUX', 'LV': 'LVA',
+  'MK': 'MKD', 'ME': 'MNE', 'NL': 'NLD', 'NO': 'NOR', 'PL': 'POL',
+  'PT': 'PRT', 'RO': 'ROU', 'RS': 'SRB', 'SK': 'SVK', 'SI': 'SVN',
+  'SE': 'SWE', 'UA': 'UKR', 'AL': 'ALB', 'BA': 'BIH', 'XK': 'XKX',
 }
+
+// Europe-focused projection settings
+const EUROPE_CENTER: [number, number] = [10, 54]
+const DEFAULT_ZOOM = 4
 
 // Color scale for price visualization
 function getPriceColor(price: number | null): string {
   if (price === null) return '#e2e8f0'
-  if (price < 30) return '#22c55e' // Green - cheap
-  if (price < 60) return '#84cc16' // Light green
-  if (price < 100) return '#eab308' // Yellow
-  if (price < 150) return '#f97316' // Orange
-  return '#ef4444' // Red - expensive
+  if (price < 30) return '#22c55e'
+  if (price < 60) return '#84cc16'
+  if (price < 100) return '#eab308'
+  if (price < 150) return '#f97316'
+  return '#ef4444'
 }
 
-export default function EuropeMap({ summaryData, selectedCountry, onSelectCountry }: EuropeMapProps) {
+// GeoJSON URL for world countries (Natural Earth via CDN)
+const GEO_URL = 'https://cdn.jsdelivr.net/npm/world-atlas@2/countries-50m.json'
+
+export default function EuropeMap({
+  summaryData,
+  selectedCountry,
+  onSelectCountry,
+  lastUpdated
+}: EuropeMapProps) {
+  const [position, setPosition] = useState({ coordinates: EUROPE_CENTER, zoom: DEFAULT_ZOOM })
+  const [tooltipContent, setTooltipContent] = useState<{
+    name: string
+    price: number | null
+    carbon: number | null
+    x: number
+    y: number
+  } | null>(null)
+
+  const handleZoomIn = useCallback(() => {
+    if (position.zoom >= 8) return
+    setPosition(pos => ({ ...pos, zoom: pos.zoom * 1.5 }))
+  }, [position.zoom])
+
+  const handleZoomOut = useCallback(() => {
+    if (position.zoom <= 1) return
+    setPosition(pos => ({ ...pos, zoom: pos.zoom / 1.5 }))
+  }, [position.zoom])
+
+  const handleReset = useCallback(() => {
+    setPosition({ coordinates: EUROPE_CENTER, zoom: DEFAULT_ZOOM })
+  }, [])
+
+  const handleMoveEnd = useCallback((position: { coordinates: [number, number]; zoom: number }) => {
+    setPosition(position)
+  }, [])
+
+  // European country codes to highlight
+  const europeanCountries = useMemo(() => new Set(Object.values(ISO2_TO_ISO3)), [])
+
   return (
     <div className="relative">
-      <svg
-        viewBox="60 0 320 290"
-        className="w-full h-auto"
-        style={{ maxHeight: '350px' }}
+      {/* Zoom Controls */}
+      <div className="absolute top-2 right-2 z-10 flex flex-col gap-1">
+        <button
+          onClick={handleZoomIn}
+          className="p-2 bg-white rounded-lg shadow-md hover:bg-slate-50 transition-colors border border-slate-200"
+          title="Zoom in"
+        >
+          <ZoomIn className="w-4 h-4 text-slate-600" />
+        </button>
+        <button
+          onClick={handleZoomOut}
+          className="p-2 bg-white rounded-lg shadow-md hover:bg-slate-50 transition-colors border border-slate-200"
+          title="Zoom out"
+        >
+          <ZoomOut className="w-4 h-4 text-slate-600" />
+        </button>
+        <button
+          onClick={handleReset}
+          className="p-2 bg-white rounded-lg shadow-md hover:bg-slate-50 transition-colors border border-slate-200"
+          title="Reset view"
+        >
+          <RotateCcw className="w-4 h-4 text-slate-600" />
+        </button>
+      </div>
+
+      {/* Tooltip */}
+      {tooltipContent && (
+        <div
+          className="absolute z-20 px-3 py-2 bg-white rounded-lg shadow-lg border border-slate-200 pointer-events-none transform -translate-x-1/2"
+          style={{ left: tooltipContent.x, top: Math.max(0, tooltipContent.y - 60) }}
+        >
+          <p className="font-semibold text-slate-800 text-sm">{tooltipContent.name}</p>
+          <div className="flex gap-4 mt-1 text-xs">
+            {tooltipContent.price !== null && (
+              <span className="text-amber-600">
+                €{tooltipContent.price.toFixed(0)}/MWh
+              </span>
+            )}
+            {tooltipContent.carbon !== null && (
+              <span className="text-green-600">
+                {tooltipContent.carbon.toFixed(0)} gCO₂/kWh
+              </span>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* Map */}
+      <ComposableMap
+        projection="geoMercator"
+        projectionConfig={{
+          center: EUROPE_CENTER,
+          scale: 400,
+        }}
+        style={{ width: '100%', height: '350px' }}
       >
-        {/* Background */}
-        <rect x="60" y="0" width="320" height="290" fill="#f8fafc" rx="8" />
+        <ZoomableGroup
+          center={position.coordinates}
+          zoom={position.zoom}
+          onMoveEnd={handleMoveEnd}
+          minZoom={1}
+          maxZoom={8}
+        >
+          <Geographies geography={GEO_URL}>
+            {({ geographies }) =>
+              geographies.map((geo) => {
+                const iso2 = geo.properties?.ISO_A2 || geo.id?.substring(0, 2)
+                const iso3 = ISO2_TO_ISO3[iso2] || geo.properties?.ISO_A3
+                const countryData = summaryData?.[iso3]
+                const isEuropean = europeanCountries.has(iso3) || countryData
+                const isSelected = selectedCountry === iso3
 
-        {/* Sea indication */}
-        <ellipse cx="100" cy="200" rx="50" ry="60" fill="#e0f2fe" opacity="0.5" />
-        <ellipse cx="300" cy="260" rx="60" ry="40" fill="#e0f2fe" opacity="0.5" />
-        <ellipse cx="180" cy="100" rx="40" ry="30" fill="#e0f2fe" opacity="0.5" />
+                // Only render European countries in detail
+                if (!isEuropean) {
+                  return (
+                    <Geography
+                      key={geo.rsmKey}
+                      geography={geo}
+                      fill="#f1f5f9"
+                      stroke="#e2e8f0"
+                      strokeWidth={0.3}
+                      style={{
+                        default: { outline: 'none' },
+                        hover: { outline: 'none' },
+                        pressed: { outline: 'none' },
+                      }}
+                    />
+                  )
+                }
 
-        {/* Countries */}
-        {Object.entries(COUNTRY_PATHS).map(([iso3, path]) => {
-          const countryData = summaryData?.[iso3]
-          const isSelected = selectedCountry === iso3
-          const fillColor = countryData
-            ? getPriceColor(countryData.avgPrice7d)
-            : '#e2e8f0'
+                const fillColor = countryData
+                  ? getPriceColor(countryData.avgPrice7d)
+                  : '#e2e8f0'
 
-          return (
-            <g key={iso3}>
-              <path
-                d={path.d}
-                fill={fillColor}
-                className={`country-path ${isSelected ? 'selected' : ''}`}
-                onClick={() => onSelectCountry(iso3)}
-                style={{
-                  filter: isSelected ? 'brightness(0.9)' : 'none',
-                  strokeWidth: isSelected ? 2 : 0.5,
-                  stroke: isSelected ? '#1e40af' : '#94a3b8'
-                }}
-              />
-              {/* Country label for larger countries */}
-              {countryData && ['DEU', 'FRA', 'ESP', 'ITA', 'POL', 'GBR', 'SWE', 'NOR', 'FIN', 'ROU'].includes(iso3) && (
-                <text
-                  x={path.cx}
-                  y={path.cy}
-                  textAnchor="middle"
-                  dominantBaseline="middle"
-                  className="pointer-events-none"
-                  style={{
-                    fontSize: '8px',
-                    fontWeight: isSelected ? 'bold' : 'normal',
-                    fill: '#1e293b'
-                  }}
-                >
-                  {iso3}
-                </text>
-              )}
-            </g>
-          )
-        })}
-      </svg>
+                return (
+                  <Geography
+                    key={geo.rsmKey}
+                    geography={geo}
+                    fill={fillColor}
+                    stroke={isSelected ? '#1e40af' : '#94a3b8'}
+                    strokeWidth={isSelected ? 1.5 : 0.5}
+                    onClick={() => {
+                      if (countryData) {
+                        onSelectCountry(iso3)
+                      }
+                    }}
+                    onMouseEnter={(e) => {
+                      if (countryData) {
+                        const rect = (e.target as HTMLElement).closest('svg')?.getBoundingClientRect()
+                        if (rect) {
+                          setTooltipContent({
+                            name: countryData.name,
+                            price: countryData.avgPrice7d,
+                            carbon: countryData.avgCarbon7d,
+                            x: e.clientX - rect.left,
+                            y: e.clientY - rect.top,
+                          })
+                        }
+                      }
+                    }}
+                    onMouseLeave={() => setTooltipContent(null)}
+                    style={{
+                      default: {
+                        outline: 'none',
+                        cursor: countryData ? 'pointer' : 'default',
+                        transition: 'all 0.2s',
+                      },
+                      hover: {
+                        outline: 'none',
+                        fill: countryData ? (isSelected ? fillColor : `${fillColor}cc`) : '#e2e8f0',
+                        stroke: countryData ? '#3b82f6' : '#94a3b8',
+                        strokeWidth: countryData ? 1 : 0.5,
+                      },
+                      pressed: {
+                        outline: 'none',
+                        fill: fillColor,
+                      },
+                    }}
+                  />
+                )
+              })
+            }
+          </Geographies>
+        </ZoomableGroup>
+      </ComposableMap>
 
       {/* Legend */}
-      <div className="mt-4 flex items-center justify-center gap-1">
-        <span className="text-xs text-slate-500 mr-2">Price:</span>
-        <div className="flex items-center gap-1">
-          <div className="w-4 h-3 rounded" style={{ backgroundColor: '#22c55e' }}></div>
-          <span className="text-xs text-slate-500">&lt;€30</span>
-        </div>
-        <div className="flex items-center gap-1">
-          <div className="w-4 h-3 rounded" style={{ backgroundColor: '#84cc16' }}></div>
-          <span className="text-xs text-slate-500">€30-60</span>
-        </div>
-        <div className="flex items-center gap-1">
-          <div className="w-4 h-3 rounded" style={{ backgroundColor: '#eab308' }}></div>
-          <span className="text-xs text-slate-500">€60-100</span>
-        </div>
-        <div className="flex items-center gap-1">
-          <div className="w-4 h-3 rounded" style={{ backgroundColor: '#f97316' }}></div>
-          <span className="text-xs text-slate-500">€100-150</span>
-        </div>
-        <div className="flex items-center gap-1">
-          <div className="w-4 h-3 rounded" style={{ backgroundColor: '#ef4444' }}></div>
-          <span className="text-xs text-slate-500">&gt;€150</span>
-        </div>
+      <div className="mt-3 flex flex-wrap items-center justify-center gap-x-3 gap-y-1">
+        <span className="text-xs text-slate-500">Price:</span>
+        {[
+          { color: '#22c55e', label: '<€30' },
+          { color: '#84cc16', label: '€30-60' },
+          { color: '#eab308', label: '€60-100' },
+          { color: '#f97316', label: '€100-150' },
+          { color: '#ef4444', label: '>€150' },
+        ].map(({ color, label }) => (
+          <div key={label} className="flex items-center gap-1">
+            <div className="w-3 h-3 rounded" style={{ backgroundColor: color }}></div>
+            <span className="text-xs text-slate-500">{label}</span>
+          </div>
+        ))}
       </div>
+
+      {/* Last Updated */}
+      {lastUpdated && (
+        <div className="mt-2 text-center">
+          <span className="text-xs text-slate-400">
+            Last updated: {new Date(lastUpdated).toLocaleString()}
+          </span>
+        </div>
+      )}
     </div>
   )
 }
