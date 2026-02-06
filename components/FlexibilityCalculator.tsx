@@ -20,6 +20,12 @@ interface FlexibilityMetric {
   percentageOfAvgPrice: number
 }
 
+interface CarbonFlexibilityMetric {
+  avgSavingsPerMWh: number // gCO2/kWh savings
+  savingsPerGWh: number
+  percentageOfAvgCarbon: number
+}
+
 interface CountryData {
   iso3: string
   name: string
@@ -31,21 +37,105 @@ interface CountryData {
     '4h': FlexibilityMetric
     '8h': FlexibilityMetric
   } | null
+  carbonFlexibilityMetrics?: {
+    '1h': CarbonFlexibilityMetric
+    '2h': CarbonFlexibilityMetric
+    '4h': CarbonFlexibilityMetric
+    '8h': CarbonFlexibilityMetric
+  } | null
   stats: {
     avgPrice: number
     avgCarbon: number
   }
 }
 
-interface FlexibilityCalculatorProps {
-  countryCode: string
+// Hourly carbon data that can come from live APIs (e.g., NESO)
+interface HourlyCarbonData {
+  datetime: string
+  carbonIntensity: number
 }
 
-export default function FlexibilityCalculator({ countryCode }: FlexibilityCalculatorProps) {
+interface FlexibilityCalculatorProps {
+  countryCode: string
+  hourlyCarbonData?: HourlyCarbonData[] // Optional hourly carbon data from live APIs
+}
+
+// Calculate carbon flexibility metrics from hourly data (same algorithm as price)
+function calculateCarbonFlexibility(hourlyData: HourlyCarbonData[]): {
+  '1h': CarbonFlexibilityMetric
+  '2h': CarbonFlexibilityMetric
+  '4h': CarbonFlexibilityMetric
+  '8h': CarbonFlexibilityMetric
+} | null {
+  if (hourlyData.length < 24) {
+    return null
+  }
+
+  const windows = [1, 2, 4, 8] as const
+  const results: Record<string, CarbonFlexibilityMetric> = {}
+
+  // Calculate average carbon intensity for percentage calculations
+  const avgCarbon = hourlyData.reduce((s, p) => s + p.carbonIntensity, 0) / hourlyData.length
+
+  windows.forEach(window => {
+    let totalSavings = 0
+    let possibleShifts = 0
+
+    // For each hour, calculate potential savings from shifting load
+    for (let i = 0; i < hourlyData.length - window; i++) {
+      const currentCarbon = hourlyData[i].carbonIntensity
+
+      // Find minimum carbon intensity within the flexibility window
+      let minCarbon = currentCarbon
+      for (let j = 1; j <= window; j++) {
+        if (i + j < hourlyData.length) {
+          minCarbon = Math.min(minCarbon, hourlyData[i + j].carbonIntensity)
+        }
+      }
+
+      // Also check backward
+      for (let j = 1; j <= window; j++) {
+        if (i - j >= 0) {
+          minCarbon = Math.min(minCarbon, hourlyData[i - j].carbonIntensity)
+        }
+      }
+
+      const savings = currentCarbon - minCarbon
+      if (savings > 0) {
+        totalSavings += savings
+        possibleShifts++
+      }
+    }
+
+    const avgSavings = possibleShifts > 0 ? totalSavings / hourlyData.length : 0
+
+    results[`${window}h`] = {
+      avgSavingsPerMWh: Math.round(avgSavings * 100) / 100, // gCO2/kWh
+      savingsPerGWh: Math.round(avgSavings * 1000), // kg CO2 per GWh
+      percentageOfAvgCarbon: Math.round((avgSavings / avgCarbon) * 10000) / 100
+    }
+  })
+
+  return results as {
+    '1h': CarbonFlexibilityMetric
+    '2h': CarbonFlexibilityMetric
+    '4h': CarbonFlexibilityMetric
+    '8h': CarbonFlexibilityMetric
+  }
+}
+
+export default function FlexibilityCalculator({ countryCode, hourlyCarbonData }: FlexibilityCalculatorProps) {
   const [data, setData] = useState<CountryData | null>(null)
   const [loading, setLoading] = useState(true)
   const [loadSize, setLoadSize] = useState(1) // GWh
   const [selectedWindow, setSelectedWindow] = useState<'1h' | '2h' | '4h' | '8h'>('4h')
+  const [calculatedCarbonMetrics, setCalculatedCarbonMetrics] = useState<{
+    '1h': CarbonFlexibilityMetric
+    '2h': CarbonFlexibilityMetric
+    '4h': CarbonFlexibilityMetric
+    '8h': CarbonFlexibilityMetric
+  } | null>(null)
+  const [carbonDataSource, setCarbonDataSource] = useState<'calculated' | 'estimated'>('estimated')
 
   useEffect(() => {
     setLoading(true)
@@ -60,6 +150,69 @@ export default function FlexibilityCalculator({ countryCode }: FlexibilityCalcul
         setLoading(false)
       })
   }, [countryCode])
+
+  // Fetch hourly carbon data for UK (NESO provides half-hourly data)
+  useEffect(() => {
+    const fetchHourlyCarbonData = async () => {
+      if (countryCode === 'GBR') {
+        try {
+          // Fetch last 48 hours of data from NESO
+          const now = new Date()
+          const twoDaysAgo = new Date(now.getTime() - 48 * 60 * 60 * 1000)
+          const from = twoDaysAgo.toISOString()
+          const to = now.toISOString()
+
+          const response = await fetch(`/api/neso?type=history&from=${from}&to=${to}`)
+          const result = await response.json()
+
+          if (result.source === 'live' && result.data && result.data.length > 0) {
+            // Convert NESO data to our hourly format
+            const hourlyData: HourlyCarbonData[] = result.data.map((item: {
+              from: string
+              intensity: { actual: number; forecast: number }
+            }) => ({
+              datetime: item.from,
+              carbonIntensity: item.intensity.actual || item.intensity.forecast
+            }))
+
+            // Calculate carbon flexibility from the hourly data
+            const metrics = calculateCarbonFlexibility(hourlyData)
+            if (metrics) {
+              setCalculatedCarbonMetrics(metrics)
+              setCarbonDataSource('calculated')
+              return
+            }
+          }
+        } catch (error) {
+          console.error('Error fetching hourly carbon data:', error)
+        }
+      }
+
+      // Fall back to pre-calculated metrics or estimation
+      if (data?.carbonFlexibilityMetrics) {
+        setCalculatedCarbonMetrics(data.carbonFlexibilityMetrics)
+        setCarbonDataSource('calculated')
+      } else {
+        setCalculatedCarbonMetrics(null)
+        setCarbonDataSource('estimated')
+      }
+    }
+
+    if (data) {
+      fetchHourlyCarbonData()
+    }
+  }, [countryCode, data])
+
+  // Also calculate from prop data if provided (for other sources)
+  useEffect(() => {
+    if (hourlyCarbonData && hourlyCarbonData.length >= 24) {
+      const metrics = calculateCarbonFlexibility(hourlyCarbonData)
+      if (metrics) {
+        setCalculatedCarbonMetrics(metrics)
+        setCarbonDataSource('calculated')
+      }
+    }
+  }, [hourlyCarbonData])
 
   if (loading || !data) {
     return (
@@ -90,19 +243,32 @@ export default function FlexibilityCalculator({ countryCode }: FlexibilityCalcul
     { window: '8h', savings: data.flexibilityMetrics['8h'].avgSavingsPerMWh, percentage: data.flexibilityMetrics['8h'].percentageOfAvgPrice },
   ]
 
-  // Calculate carbon savings estimation
-  // Assuming carbon intensity varies by ~20% from mean during peak vs off-peak
+  // Carbon savings calculation
+  // Use calculated metrics from hourly data if available, otherwise estimate
   const avgCarbon = data.stats.avgCarbon
-  const estimatedCarbonVariation = avgCarbon * 0.15 // Conservative estimate of peak-to-trough variation
-  const carbonSavingsPerMWh = {
-    '1h': estimatedCarbonVariation * 0.3,
-    '2h': estimatedCarbonVariation * 0.5,
-    '4h': estimatedCarbonVariation * 0.7,
-    '8h': estimatedCarbonVariation * 0.9,
+
+  let currentCarbonSavings: number
+  let carbonPercentage: number
+
+  if (calculatedCarbonMetrics) {
+    // Use actual calculated carbon flexibility metrics
+    currentCarbonSavings = calculatedCarbonMetrics[selectedWindow].avgSavingsPerMWh
+    carbonPercentage = calculatedCarbonMetrics[selectedWindow].percentageOfAvgCarbon
+  } else {
+    // Fall back to estimation when hourly carbon data isn't available
+    // Assuming carbon intensity varies by ~15% from mean during peak vs off-peak
+    const estimatedCarbonVariation = avgCarbon * 0.15
+    const estimatedCarbonSavingsPerMWh = {
+      '1h': estimatedCarbonVariation * 0.3,
+      '2h': estimatedCarbonVariation * 0.5,
+      '4h': estimatedCarbonVariation * 0.7,
+      '8h': estimatedCarbonVariation * 0.9,
+    }
+    currentCarbonSavings = estimatedCarbonSavingsPerMWh[selectedWindow]
+    carbonPercentage = (currentCarbonSavings / avgCarbon) * 100
   }
 
   const currentMetrics = data.flexibilityMetrics[selectedWindow]
-  const currentCarbonSavings = carbonSavingsPerMWh[selectedWindow]
 
   // Calculate total savings based on load size
   const totalCostSavings = currentMetrics.avgSavingsPerMWh * loadSize * 1000 // Convert GWh to MWh
@@ -219,9 +385,18 @@ export default function FlexibilityCalculator({ countryCode }: FlexibilityCalcul
 
           {/* Carbon Savings Card */}
           <div className="bg-gradient-to-br from-purple-50 to-violet-50 rounded-xl p-5 border border-purple-200">
-            <div className="flex items-center gap-2 mb-4">
-              <Leaf className="w-5 h-5 text-purple-600" />
-              <h3 className="font-semibold text-purple-900">Carbon Savings</h3>
+            <div className="flex items-center justify-between mb-4">
+              <div className="flex items-center gap-2">
+                <Leaf className="w-5 h-5 text-purple-600" />
+                <h3 className="font-semibold text-purple-900">Carbon Savings</h3>
+              </div>
+              <span className={`text-xs px-2 py-1 rounded-full ${
+                carbonDataSource === 'calculated'
+                  ? 'bg-green-100 text-green-700'
+                  : 'bg-amber-100 text-amber-700'
+              }`}>
+                {carbonDataSource === 'calculated' ? '✓ Calculated' : '~ Estimated'}
+              </span>
             </div>
 
             <div className="space-y-4">
@@ -243,8 +418,8 @@ export default function FlexibilityCalculator({ countryCode }: FlexibilityCalcul
 
               <div className="bg-white/50 rounded-lg p-3">
                 <p className="text-xs text-purple-700">
-                  <span className="font-medium">{currentCarbonSavings.toFixed(1)} gCO₂/kWh</span> estimated reduction
-                  from load shifting
+                  <span className="font-medium">{currentCarbonSavings.toFixed(1)} gCO₂/kWh</span> {carbonDataSource === 'calculated' ? 'calculated' : 'estimated'} reduction
+                  ({carbonPercentage.toFixed(1)}% of avg intensity)
                 </p>
               </div>
             </div>
@@ -308,9 +483,14 @@ export default function FlexibilityCalculator({ countryCode }: FlexibilityCalcul
                   all hours in the last 30 days gives the expected value of flexibility.
                 </p>
                 <p>
-                  <strong>Carbon Savings:</strong> Carbon intensity typically correlates with demand and varies
-                  throughout the day. By shifting load to lower-carbon hours (often off-peak when renewables
-                  have higher share), emissions can be reduced.
+                  <strong>Carbon Savings:</strong> {carbonDataSource === 'calculated' ? (
+                    <>Calculated from hourly carbon intensity data{countryCode === 'GBR' ? ' (NESO API - last 48 hours)' : ''}.
+                    We find the potential emissions reduction from shifting consumption to the lowest-carbon hour
+                    within the flexibility window, using the same methodology as cost savings.</>
+                  ) : (
+                    <>Estimated based on typical daily variation patterns (~15% peak-to-trough). Countries with
+                    live hourly carbon data (e.g., UK via NESO) show calculated values instead of estimates.</>
+                  )}
                 </p>
                 <p className="flex items-center gap-2 text-blue-600 font-medium">
                   <ArrowRight className="w-4 h-4" />

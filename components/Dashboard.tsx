@@ -538,6 +538,77 @@ export default function Dashboard({ countryCode }: DashboardProps) {
         </div>
       </div>
 
+      {/* Carbon Intensity Chart (Last 7 Days) */}
+      <div className="card p-4">
+        <div className="flex items-center justify-between mb-4">
+          <div className="flex items-center gap-2">
+            <Leaf className="w-5 h-5 text-green-500" />
+            <h3 className="text-lg font-semibold text-slate-800">Carbon Intensity (Last 7 Days)</h3>
+          </div>
+          <span className={`text-xs px-2 py-1 rounded ${
+            dataSource.carbonSource === 'live' ? 'bg-green-100 text-green-700' : 'bg-amber-100 text-amber-700'
+          }`}>
+            {dataSource.carbonSource === 'live' ? '⚡ Real-time' : '📊 Historical'}
+          </span>
+        </div>
+        <div className="h-64">
+          <ResponsiveContainer width="100%" height="100%">
+            <AreaChart data={data.carbonIntensity.slice(-168)}>
+              <defs>
+                <linearGradient id="carbonGradient" x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="5%" stopColor="#22c55e" stopOpacity={0.3} />
+                  <stop offset="95%" stopColor="#22c55e" stopOpacity={0} />
+                </linearGradient>
+              </defs>
+              <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
+              <XAxis
+                dataKey="date"
+                tick={{ fontSize: 11, fill: '#64748b' }}
+                tickLine={false}
+                interval="preserveStartEnd"
+                tickFormatter={(date) => {
+                  try {
+                    return format(parseISO(date), 'MMM d')
+                  } catch {
+                    return date
+                  }
+                }}
+              />
+              <YAxis
+                tick={{ fontSize: 11, fill: '#64748b' }}
+                tickLine={false}
+                axisLine={false}
+                tickFormatter={(v) => `${v}`}
+                label={{ value: 'gCO₂/kWh', angle: -90, position: 'insideLeft', style: { fontSize: 11, fill: '#64748b' } }}
+              />
+              <Tooltip
+                contentStyle={{
+                  backgroundColor: 'white',
+                  border: '1px solid #e2e8f0',
+                  borderRadius: '8px',
+                  fontSize: '12px'
+                }}
+                formatter={(value: number) => [`${value?.toFixed(0)} gCO₂/kWh`, 'Carbon Intensity']}
+                labelFormatter={(date) => {
+                  try {
+                    return format(parseISO(date as string), 'MMMM d, yyyy')
+                  } catch {
+                    return date as string
+                  }
+                }}
+              />
+              <Area
+                type="monotone"
+                dataKey="carbonIntensity"
+                stroke="#22c55e"
+                strokeWidth={2}
+                fill="url(#carbonGradient)"
+              />
+            </AreaChart>
+          </ResponsiveContainer>
+        </div>
+      </div>
+
       {/* Combined Daily Chart */}
       <div className="card p-4">
         <div className="flex items-center justify-between mb-4">

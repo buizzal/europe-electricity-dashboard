@@ -24,8 +24,9 @@ interface EuropeMapProps {
   lastUpdated?: string | null
 }
 
-// Map ISO2 to ISO3 codes
-const ISO2_TO_ISO3: { [key: string]: string } = {
+// Map various country identifiers to ISO3 codes
+const COUNTRY_TO_ISO3: { [key: string]: string } = {
+  // ISO2 codes
   'AT': 'AUT', 'BE': 'BEL', 'BG': 'BGR', 'CH': 'CHE', 'CZ': 'CZE',
   'DE': 'DEU', 'DK': 'DNK', 'ES': 'ESP', 'EE': 'EST', 'FI': 'FIN',
   'FR': 'FRA', 'GB': 'GBR', 'GR': 'GRC', 'HR': 'HRV', 'HU': 'HUN',
@@ -33,6 +34,24 @@ const ISO2_TO_ISO3: { [key: string]: string } = {
   'MK': 'MKD', 'ME': 'MNE', 'NL': 'NLD', 'NO': 'NOR', 'PL': 'POL',
   'PT': 'PRT', 'RO': 'ROU', 'RS': 'SRB', 'SK': 'SVK', 'SI': 'SVN',
   'SE': 'SWE', 'UA': 'UKR', 'AL': 'ALB', 'BA': 'BIH', 'XK': 'XKX',
+  // ISO3 codes (identity mapping)
+  'AUT': 'AUT', 'BEL': 'BEL', 'BGR': 'BGR', 'CHE': 'CHE', 'CZE': 'CZE',
+  'DEU': 'DEU', 'DNK': 'DNK', 'ESP': 'ESP', 'EST': 'EST', 'FIN': 'FIN',
+  'FRA': 'FRA', 'GBR': 'GBR', 'GRC': 'GRC', 'HRV': 'HRV', 'HUN': 'HUN',
+  'IRL': 'IRL', 'ITA': 'ITA', 'LTU': 'LTU', 'LUX': 'LUX', 'LVA': 'LVA',
+  'MKD': 'MKD', 'MNE': 'MNE', 'NLD': 'NLD', 'NOR': 'NOR', 'POL': 'POL',
+  'PRT': 'PRT', 'ROU': 'ROU', 'SRB': 'SRB', 'SVK': 'SVK', 'SVN': 'SVN',
+  'SWE': 'SWE',
+  // Country names
+  'Austria': 'AUT', 'Belgium': 'BEL', 'Bulgaria': 'BGR', 'Switzerland': 'CHE',
+  'Czech Republic': 'CZE', 'Czechia': 'CZE', 'Germany': 'DEU', 'Denmark': 'DNK',
+  'Spain': 'ESP', 'Estonia': 'EST', 'Finland': 'FIN', 'France': 'FRA',
+  'United Kingdom': 'GBR', 'Greece': 'GRC', 'Croatia': 'HRV', 'Hungary': 'HUN',
+  'Ireland': 'IRL', 'Italy': 'ITA', 'Lithuania': 'LTU', 'Luxembourg': 'LUX',
+  'Latvia': 'LVA', 'North Macedonia': 'MKD', 'Montenegro': 'MNE',
+  'Netherlands': 'NLD', 'Norway': 'NOR', 'Poland': 'POL', 'Portugal': 'PRT',
+  'Romania': 'ROU', 'Serbia': 'SRB', 'Slovakia': 'SVK', 'Slovenia': 'SVN',
+  'Sweden': 'SWE',
 }
 
 // Europe-focused projection settings
@@ -51,6 +70,31 @@ function getPriceColor(price: number | null): string {
 
 // GeoJSON URL for world countries (Natural Earth via CDN)
 const GEO_URL = 'https://cdn.jsdelivr.net/npm/world-atlas@2/countries-50m.json'
+
+// Helper to extract ISO3 code from geography properties
+function getISO3FromGeo(geo: any): string | null {
+  const props = geo.properties || {}
+
+  // Try various property names used in different TopoJSON sources
+  const candidates = [
+    props.ISO_A3,
+    props.iso_a3,
+    props.ISO_A2,
+    props.iso_a2,
+    props.name,
+    props.NAME,
+    props.admin,
+    props.ADMIN,
+    geo.id,
+  ].filter(Boolean)
+
+  for (const candidate of candidates) {
+    const iso3 = COUNTRY_TO_ISO3[candidate]
+    if (iso3) return iso3
+  }
+
+  return null
+}
 
 export default function EuropeMap({
   summaryData,
@@ -85,8 +129,16 @@ export default function EuropeMap({
     setPosition(position)
   }, [])
 
-  // European country codes to highlight
-  const europeanCountries = useMemo(() => new Set(Object.values(ISO2_TO_ISO3)), [])
+  // Set of all ISO3 codes we have data for
+  const countriesWithData = useMemo(() => {
+    return new Set(Object.keys(summaryData || {}))
+  }, [summaryData])
+
+  const handleCountryClick = useCallback((iso3: string | null) => {
+    if (iso3 && countriesWithData.has(iso3)) {
+      onSelectCountry(iso3)
+    }
+  }, [onSelectCountry, countriesWithData])
 
   return (
     <div className="relative">
@@ -134,6 +186,7 @@ export default function EuropeMap({
               </span>
             )}
           </div>
+          <p className="text-xs text-blue-500 mt-1">Click to select</p>
         </div>
       )}
 
@@ -152,33 +205,18 @@ export default function EuropeMap({
           onMoveEnd={handleMoveEnd}
           minZoom={1}
           maxZoom={8}
+          filterZoomEvent={(evt) => {
+            // Allow click events to pass through for country selection
+            return evt.type !== 'click'
+          }}
         >
           <Geographies geography={GEO_URL}>
             {({ geographies }) =>
               geographies.map((geo) => {
-                const iso2 = geo.properties?.ISO_A2 || geo.id?.substring(0, 2)
-                const iso3 = ISO2_TO_ISO3[iso2] || geo.properties?.ISO_A3
-                const countryData = summaryData?.[iso3]
-                const isEuropean = europeanCountries.has(iso3) || countryData
+                const iso3 = getISO3FromGeo(geo)
+                const countryData = iso3 ? summaryData?.[iso3] : null
+                const hasData = iso3 && countriesWithData.has(iso3)
                 const isSelected = selectedCountry === iso3
-
-                // Only render European countries in detail
-                if (!isEuropean) {
-                  return (
-                    <Geography
-                      key={geo.rsmKey}
-                      geography={geo}
-                      fill="#f1f5f9"
-                      stroke="#e2e8f0"
-                      strokeWidth={0.3}
-                      style={{
-                        default: { outline: 'none' },
-                        hover: { outline: 'none' },
-                        pressed: { outline: 'none' },
-                      }}
-                    />
-                  )
-                }
 
                 const fillColor = countryData
                   ? getPriceColor(countryData.avgPrice7d)
@@ -189,17 +227,14 @@ export default function EuropeMap({
                     key={geo.rsmKey}
                     geography={geo}
                     fill={fillColor}
-                    stroke={isSelected ? '#1e40af' : '#94a3b8'}
-                    strokeWidth={isSelected ? 1.5 : 0.5}
-                    onClick={() => {
-                      if (countryData) {
-                        onSelectCountry(iso3)
-                      }
-                    }}
+                    stroke={isSelected ? '#1e40af' : hasData ? '#64748b' : '#e2e8f0'}
+                    strokeWidth={isSelected ? 2 : hasData ? 0.5 : 0.25}
+                    onClick={() => handleCountryClick(iso3)}
                     onMouseEnter={(e) => {
-                      if (countryData) {
-                        const rect = (e.target as HTMLElement).closest('svg')?.getBoundingClientRect()
-                        if (rect) {
+                      if (countryData && iso3) {
+                        const svgElement = (e.target as SVGElement).closest('svg')
+                        if (svgElement) {
+                          const rect = svgElement.getBoundingClientRect()
                           setTooltipContent({
                             name: countryData.name,
                             price: countryData.avgPrice7d,
@@ -214,14 +249,14 @@ export default function EuropeMap({
                     style={{
                       default: {
                         outline: 'none',
-                        cursor: countryData ? 'pointer' : 'default',
-                        transition: 'all 0.2s',
+                        cursor: hasData ? 'pointer' : 'default',
+                        transition: 'all 0.15s ease-out',
                       },
                       hover: {
                         outline: 'none',
-                        fill: countryData ? (isSelected ? fillColor : `${fillColor}cc`) : '#e2e8f0',
-                        stroke: countryData ? '#3b82f6' : '#94a3b8',
-                        strokeWidth: countryData ? 1 : 0.5,
+                        fill: hasData ? (isSelected ? fillColor : `${fillColor}dd`) : '#f1f5f9',
+                        stroke: hasData ? '#3b82f6' : '#e2e8f0',
+                        strokeWidth: hasData ? 1.5 : 0.25,
                       },
                       pressed: {
                         outline: 'none',

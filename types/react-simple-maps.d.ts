@@ -46,6 +46,7 @@ declare module 'react-simple-maps' {
     minZoom?: number
     maxZoom?: number
     onMoveEnd?: (position: { coordinates: [number, number]; zoom: number }) => void
+    filterZoomEvent?: (event: WheelEvent | TouchEvent | MouseEvent) => boolean
     children?: ReactNode
   }
 

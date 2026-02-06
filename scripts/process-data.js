@@ -230,6 +230,11 @@ function processData() {
     // Calculate flexibility value metrics for different time windows
     const flexibilityMetrics = calculateFlexibilityMetrics(last30Days);
 
+    // For carbon flexibility, we only have daily data in the static files
+    // When hourly carbon data is available (e.g., from live APIs), it can be calculated
+    // For now, set to null to indicate estimation should be used
+    const carbonFlexibilityMetrics = null;
+
     // Save country data
     const countryData = {
       iso3,
@@ -238,6 +243,7 @@ function processData() {
       dailyPrices: dailyPriceArray.slice(-365), // Last year
       carbonIntensity: carbonArray.slice(-365), // Last year
       flexibilityMetrics,
+      carbonFlexibilityMetrics, // Will be populated when hourly carbon data is available
       stats: {
         avgPrice: Math.round((hourlyPrices.reduce((s, p) => s + p.price, 0) / hourlyPrices.length) * 100) / 100,
         avgCarbon: Math.round((carbonArray.reduce((s, c) => s + c.carbonIntensity, 0) / carbonArray.length) * 100) / 100
@@ -283,7 +289,8 @@ function processData() {
   console.log('Data processing complete!');
 }
 
-function calculateFlexibilityMetrics(hourlyData) {
+// Generic flexibility calculation that works with any hourly value data (price or carbon)
+function calculateFlexibilityMetricsGeneric(hourlyData, valueKey) {
   if (hourlyData.length < 24) {
     return null;
   }
@@ -291,30 +298,33 @@ function calculateFlexibilityMetrics(hourlyData) {
   const windows = [1, 2, 4, 8]; // Hours of flexibility
   const results = {};
 
+  // Calculate average value for percentage calculations
+  const avgValue = hourlyData.reduce((s, p) => s + p[valueKey], 0) / hourlyData.length;
+
   windows.forEach(window => {
     let totalSavings = 0;
     let possibleShifts = 0;
 
     // For each hour, calculate potential savings from shifting load
     for (let i = 0; i < hourlyData.length - window; i++) {
-      const currentPrice = hourlyData[i].price;
+      const currentValue = hourlyData[i][valueKey];
 
-      // Find minimum price within the flexibility window
-      let minPrice = currentPrice;
+      // Find minimum value within the flexibility window
+      let minValue = currentValue;
       for (let j = 1; j <= window; j++) {
         if (i + j < hourlyData.length) {
-          minPrice = Math.min(minPrice, hourlyData[i + j].price);
+          minValue = Math.min(minValue, hourlyData[i + j][valueKey]);
         }
       }
 
       // Also check backward
       for (let j = 1; j <= window; j++) {
         if (i - j >= 0) {
-          minPrice = Math.min(minPrice, hourlyData[i - j].price);
+          minValue = Math.min(minValue, hourlyData[i - j][valueKey]);
         }
       }
 
-      const savings = currentPrice - minPrice;
+      const savings = currentValue - minValue;
       if (savings > 0) {
         totalSavings += savings;
         possibleShifts++;
@@ -324,13 +334,47 @@ function calculateFlexibilityMetrics(hourlyData) {
     const avgSavings = possibleShifts > 0 ? totalSavings / hourlyData.length : 0;
 
     results[`${window}h`] = {
-      avgSavingsPerMWh: Math.round(avgSavings * 100) / 100,
-      savingsPerGWh: Math.round(avgSavings * 1000), // EUR per GWh
-      percentageOfAvgPrice: Math.round((avgSavings / (hourlyData.reduce((s, p) => s + p.price, 0) / hourlyData.length)) * 10000) / 100
+      avgSavingsPerUnit: Math.round(avgSavings * 100) / 100,
+      savingsPerGWh: Math.round(avgSavings * 1000),
+      percentageOfAvg: Math.round((avgSavings / avgValue) * 10000) / 100
     };
   });
 
   return results;
+}
+
+// Price flexibility calculation (backward compatible wrapper)
+function calculateFlexibilityMetrics(hourlyData) {
+  const results = calculateFlexibilityMetricsGeneric(hourlyData, 'price');
+  if (!results) return null;
+
+  // Convert to the original format for backward compatibility
+  const formatted = {};
+  Object.keys(results).forEach(window => {
+    formatted[window] = {
+      avgSavingsPerMWh: results[window].avgSavingsPerUnit,
+      savingsPerGWh: results[window].savingsPerGWh,
+      percentageOfAvgPrice: results[window].percentageOfAvg
+    };
+  });
+  return formatted;
+}
+
+// Carbon flexibility calculation using hourly carbon intensity data
+function calculateCarbonFlexibilityMetrics(hourlyData) {
+  const results = calculateFlexibilityMetricsGeneric(hourlyData, 'carbonIntensity');
+  if (!results) return null;
+
+  // Format specifically for carbon savings
+  const formatted = {};
+  Object.keys(results).forEach(window => {
+    formatted[window] = {
+      avgSavingsPerMWh: results[window].avgSavingsPerUnit, // gCO2/kWh savings per MWh shifted
+      savingsPerGWh: results[window].savingsPerGWh, // gCO2 savings per GWh (actually kg since GWh = 1000 MWh)
+      percentageOfAvgCarbon: results[window].percentageOfAvg
+    };
+  });
+  return formatted;
 }
 
 processData();
