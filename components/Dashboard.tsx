@@ -13,9 +13,8 @@ import {
   ResponsiveContainer,
   Legend,
   ComposedChart,
-  Bar
 } from 'recharts'
-import { Zap, Leaf, TrendingUp, Clock, Calendar } from 'lucide-react'
+import { Zap, Leaf, TrendingUp, Clock, Calendar, Database, Wifi, WifiOff, RefreshCw, AlertCircle } from 'lucide-react'
 import { format, parseISO } from 'date-fns'
 
 interface HourlyData {
@@ -59,21 +58,75 @@ interface CountryData {
   }
 }
 
+interface LiveCarbonData {
+  source: 'live' | 'static' | 'error'
+  api?: string
+  carbonIntensity?: number
+  datetime?: string
+  fetchedAt?: string
+  data?: Array<{
+    from: string
+    to: string
+    intensity: {
+      forecast: number
+      actual: number
+      index: string
+    }
+  }>
+}
+
+interface DataSourceInfo {
+  priceSource: 'static' | 'live' | 'error'
+  carbonSource: 'static' | 'live' | 'error'
+  priceApi?: string
+  carbonApi?: string
+  priceFetchedAt?: string
+  carbonFetchedAt?: string
+  priceDataType: 'historical' | 'real-time'
+  carbonDataType: 'historical' | 'real-time'
+}
+
 interface DashboardProps {
   countryCode: string
+}
+
+// Map ISO3 to Electricity Maps zones
+const ISO3_TO_ZONE: { [key: string]: string } = {
+  'AUT': 'AT', 'BEL': 'BE', 'BGR': 'BG', 'CHE': 'CH', 'CZE': 'CZ',
+  'DEU': 'DE', 'DNK': 'DK-DK1', 'ESP': 'ES', 'EST': 'EE', 'FIN': 'FI',
+  'FRA': 'FR', 'GBR': 'GB', 'GRC': 'GR', 'HRV': 'HR', 'HUN': 'HU',
+  'IRL': 'IE', 'ITA': 'IT-NO', 'LTU': 'LT', 'LUX': 'LU', 'LVA': 'LV',
+  'MKD': 'MK', 'MNE': 'ME', 'NLD': 'NL', 'NOR': 'NO-NO1', 'POL': 'PL',
+  'PRT': 'PT', 'ROU': 'RO', 'SRB': 'RS', 'SVK': 'SK', 'SVN': 'SI',
+  'SWE': 'SE-SE1',
 }
 
 export default function Dashboard({ countryCode }: DashboardProps) {
   const [data, setData] = useState<CountryData | null>(null)
   const [loading, setLoading] = useState(true)
   const [timeRange, setTimeRange] = useState<'7d' | '30d' | '90d' | '365d'>('30d')
+  const [liveCarbon, setLiveCarbon] = useState<LiveCarbonData | null>(null)
+  const [dataSource, setDataSource] = useState<DataSourceInfo>({
+    priceSource: 'static',
+    carbonSource: 'static',
+    priceDataType: 'historical',
+    carbonDataType: 'historical',
+  })
+  const [refreshing, setRefreshing] = useState(false)
 
+  // Fetch static data
   useEffect(() => {
     setLoading(true)
     fetch(`/data/${countryCode}.json`)
       .then(res => res.json())
       .then(countryData => {
         setData(countryData)
+        setDataSource(prev => ({
+          ...prev,
+          priceSource: 'static',
+          priceDataType: 'historical',
+          priceFetchedAt: new Date().toISOString(),
+        }))
         setLoading(false)
       })
       .catch(err => {
@@ -81,6 +134,126 @@ export default function Dashboard({ countryCode }: DashboardProps) {
         setLoading(false)
       })
   }, [countryCode])
+
+  // Fetch live carbon intensity data
+  useEffect(() => {
+    const fetchLiveCarbon = async () => {
+      // For UK, use NESO API (free, no auth)
+      if (countryCode === 'GBR') {
+        try {
+          const response = await fetch('/api/neso?type=current')
+          const result = await response.json()
+
+          if (result.source === 'live' && result.data?.[0]) {
+            setLiveCarbon({
+              source: 'live',
+              api: 'NESO',
+              carbonIntensity: result.data[0].intensity.actual || result.data[0].intensity.forecast,
+              datetime: result.data[0].from,
+              fetchedAt: result.fetchedAt,
+            })
+            setDataSource(prev => ({
+              ...prev,
+              carbonSource: 'live',
+              carbonApi: 'NESO Carbon Intensity',
+              carbonDataType: 'real-time',
+              carbonFetchedAt: result.fetchedAt,
+            }))
+          }
+        } catch (error) {
+          console.error('Error fetching NESO data:', error)
+          setDataSource(prev => ({ ...prev, carbonSource: 'static', carbonDataType: 'historical' }))
+        }
+      } else {
+        // For other countries, try Electricity Maps API
+        const zone = ISO3_TO_ZONE[countryCode]
+        if (zone) {
+          try {
+            const response = await fetch(`/api/carbon-intensity?zone=${zone}&type=latest`)
+            const result = await response.json()
+
+            if (result.source === 'live') {
+              setLiveCarbon({
+                source: 'live',
+                api: 'Electricity Maps',
+                carbonIntensity: result.carbonIntensity,
+                datetime: result.datetime,
+                fetchedAt: result.fetchedAt,
+              })
+              setDataSource(prev => ({
+                ...prev,
+                carbonSource: 'live',
+                carbonApi: 'Electricity Maps',
+                carbonDataType: 'real-time',
+                carbonFetchedAt: result.fetchedAt,
+              }))
+            } else {
+              setDataSource(prev => ({ ...prev, carbonSource: 'static', carbonDataType: 'historical' }))
+            }
+          } catch (error) {
+            console.error('Error fetching Electricity Maps data:', error)
+            setDataSource(prev => ({ ...prev, carbonSource: 'static', carbonDataType: 'historical' }))
+          }
+        }
+      }
+    }
+
+    fetchLiveCarbon()
+  }, [countryCode])
+
+  const handleRefresh = async () => {
+    setRefreshing(true)
+
+    // Refresh live carbon data
+    if (countryCode === 'GBR') {
+      try {
+        const response = await fetch('/api/neso?type=current')
+        const result = await response.json()
+        if (result.source === 'live' && result.data?.[0]) {
+          setLiveCarbon({
+            source: 'live',
+            api: 'NESO',
+            carbonIntensity: result.data[0].intensity.actual || result.data[0].intensity.forecast,
+            datetime: result.data[0].from,
+            fetchedAt: result.fetchedAt,
+          })
+          setDataSource(prev => ({
+            ...prev,
+            carbonSource: 'live',
+            carbonFetchedAt: result.fetchedAt,
+          }))
+        }
+      } catch (error) {
+        console.error('Error refreshing:', error)
+      }
+    } else {
+      const zone = ISO3_TO_ZONE[countryCode]
+      if (zone) {
+        try {
+          const response = await fetch(`/api/carbon-intensity?zone=${zone}&type=latest`)
+          const result = await response.json()
+          if (result.source === 'live') {
+            setLiveCarbon({
+              source: 'live',
+              api: 'Electricity Maps',
+              carbonIntensity: result.carbonIntensity,
+              datetime: result.datetime,
+              fetchedAt: result.fetchedAt,
+            })
+            setDataSource(prev => ({
+              ...prev,
+              carbonSource: 'live',
+              carbonFetchedAt: result.fetchedAt,
+            }))
+          }
+        } catch (error) {
+          console.error('Error refreshing:', error)
+        }
+      }
+    }
+
+    setRefreshing(false)
+  }
 
   if (loading) {
     return (
@@ -126,13 +299,16 @@ export default function Dashboard({ countryCode }: DashboardProps) {
     price: h.price
   }))
 
-  // Calculate current stats
+  // Calculate current stats - use live data if available
   const currentPrice = data.recentHourly.length > 0
     ? data.recentHourly[data.recentHourly.length - 1].price
     : null
-  const recentCarbon = data.carbonIntensity.length > 0
-    ? data.carbonIntensity[data.carbonIntensity.length - 1].carbonIntensity
-    : null
+
+  const currentCarbon = liveCarbon?.carbonIntensity ?? (
+    data.carbonIntensity.length > 0
+      ? data.carbonIntensity[data.carbonIntensity.length - 1].carbonIntensity
+      : null
+  )
 
   // Calculate 24h price change
   const price24hAgo = data.recentHourly.length > 24
@@ -144,9 +320,9 @@ export default function Dashboard({ countryCode }: DashboardProps) {
 
   return (
     <div className="space-y-4">
-      {/* Country Header */}
+      {/* Country Header with Data Source Info */}
       <div className="card p-4">
-        <div className="flex items-center justify-between">
+        <div className="flex items-center justify-between flex-wrap gap-4">
           <div>
             <h2 className="text-2xl font-bold text-slate-800">{data.name}</h2>
             <p className="text-sm text-slate-500">ISO Code: {data.iso3}</p>
@@ -167,6 +343,82 @@ export default function Dashboard({ countryCode }: DashboardProps) {
             ))}
           </div>
         </div>
+
+        {/* Data Source Indicators */}
+        <div className="mt-4 pt-4 border-t border-slate-100">
+          <div className="flex flex-wrap items-center gap-4 text-xs">
+            {/* Price Data Source */}
+            <div className="flex items-center gap-2">
+              <div className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-full ${
+                dataSource.priceSource === 'live'
+                  ? 'bg-green-100 text-green-700'
+                  : dataSource.priceSource === 'error'
+                  ? 'bg-red-100 text-red-700'
+                  : 'bg-slate-100 text-slate-600'
+              }`}>
+                {dataSource.priceSource === 'live' ? (
+                  <Wifi className="w-3 h-3" />
+                ) : dataSource.priceSource === 'error' ? (
+                  <AlertCircle className="w-3 h-3" />
+                ) : (
+                  <Database className="w-3 h-3" />
+                )}
+                <span className="font-medium">Price:</span>
+                <span>{dataSource.priceSource === 'live' ? 'Live' : dataSource.priceSource === 'error' ? 'Error' : 'Static'}</span>
+              </div>
+              <span className={`px-2 py-1 rounded ${
+                dataSource.priceDataType === 'real-time' ? 'bg-blue-100 text-blue-700' : 'bg-amber-100 text-amber-700'
+              }`}>
+                {dataSource.priceDataType === 'real-time' ? '⚡ Real-time' : '📊 Historical'}
+              </span>
+            </div>
+
+            {/* Carbon Data Source */}
+            <div className="flex items-center gap-2">
+              <div className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-full ${
+                dataSource.carbonSource === 'live'
+                  ? 'bg-green-100 text-green-700'
+                  : dataSource.carbonSource === 'error'
+                  ? 'bg-red-100 text-red-700'
+                  : 'bg-slate-100 text-slate-600'
+              }`}>
+                {dataSource.carbonSource === 'live' ? (
+                  <Wifi className="w-3 h-3" />
+                ) : dataSource.carbonSource === 'error' ? (
+                  <AlertCircle className="w-3 h-3" />
+                ) : (
+                  <Database className="w-3 h-3" />
+                )}
+                <span className="font-medium">Carbon:</span>
+                <span>{dataSource.carbonSource === 'live' ? `Live (${dataSource.carbonApi})` : dataSource.carbonSource === 'error' ? 'Error' : 'Static'}</span>
+              </div>
+              <span className={`px-2 py-1 rounded ${
+                dataSource.carbonDataType === 'real-time' ? 'bg-blue-100 text-blue-700' : 'bg-amber-100 text-amber-700'
+              }`}>
+                {dataSource.carbonDataType === 'real-time' ? '⚡ Real-time' : '📊 Historical'}
+              </span>
+            </div>
+
+            {/* Refresh Button */}
+            <button
+              onClick={handleRefresh}
+              disabled={refreshing}
+              className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-full bg-blue-50 text-blue-600 hover:bg-blue-100 transition-colors disabled:opacity-50"
+            >
+              <RefreshCw className={`w-3 h-3 ${refreshing ? 'animate-spin' : ''}`} />
+              <span>Refresh</span>
+            </button>
+          </div>
+
+          {/* Last Updated Timestamps */}
+          {(dataSource.carbonFetchedAt || dataSource.priceFetchedAt) && (
+            <div className="mt-2 text-xs text-slate-400">
+              {dataSource.carbonFetchedAt && dataSource.carbonSource === 'live' && (
+                <span>Carbon updated: {format(parseISO(dataSource.carbonFetchedAt), 'MMM d, HH:mm:ss')}</span>
+              )}
+            </div>
+          )}
+        </div>
       </div>
 
       {/* Key Metrics */}
@@ -185,6 +437,9 @@ export default function Dashboard({ countryCode }: DashboardProps) {
               {priceChange >= 0 ? '↑' : '↓'} {Math.abs(priceChange).toFixed(1)}% vs 24h ago
             </p>
           )}
+          <p className="text-xs text-slate-400 mt-1">
+            {dataSource.priceSource === 'live' ? '🟢 Live' : '📁 Static data'}
+          </p>
         </div>
 
         <div className="card p-4">
@@ -193,10 +448,12 @@ export default function Dashboard({ countryCode }: DashboardProps) {
             <span className="text-xs text-slate-500">Carbon Intensity</span>
           </div>
           <p className="text-2xl font-bold text-slate-800">
-            {recentCarbon?.toFixed(0) || '-'}
+            {currentCarbon?.toFixed(0) || '-'}
             <span className="text-sm font-normal text-slate-500">gCO₂/kWh</span>
           </p>
-          <p className="text-xs text-slate-400 mt-1">Latest available</p>
+          <p className="text-xs text-slate-400 mt-1">
+            {dataSource.carbonSource === 'live' ? `🟢 Live (${dataSource.carbonApi})` : '📁 Static data'}
+          </p>
         </div>
 
         <div className="card p-4">
@@ -225,9 +482,12 @@ export default function Dashboard({ countryCode }: DashboardProps) {
 
       {/* Hourly Price Chart */}
       <div className="card p-4">
-        <div className="flex items-center gap-2 mb-4">
-          <Calendar className="w-5 h-5 text-blue-500" />
-          <h3 className="text-lg font-semibold text-slate-800">Hourly Prices (Last 7 Days)</h3>
+        <div className="flex items-center justify-between mb-4">
+          <div className="flex items-center gap-2">
+            <Calendar className="w-5 h-5 text-blue-500" />
+            <h3 className="text-lg font-semibold text-slate-800">Hourly Prices (Last 7 Days)</h3>
+          </div>
+          <span className="text-xs px-2 py-1 rounded bg-amber-100 text-amber-700">📊 Historical</span>
         </div>
         <div className="h-64">
           <ResponsiveContainer width="100%" height="100%">
@@ -280,9 +540,12 @@ export default function Dashboard({ countryCode }: DashboardProps) {
 
       {/* Combined Daily Chart */}
       <div className="card p-4">
-        <h3 className="text-lg font-semibold text-slate-800 mb-4">
-          Daily Price Range & Carbon Intensity
-        </h3>
+        <div className="flex items-center justify-between mb-4">
+          <h3 className="text-lg font-semibold text-slate-800">
+            Daily Price Range & Carbon Intensity
+          </h3>
+          <span className="text-xs px-2 py-1 rounded bg-amber-100 text-amber-700">📊 Historical</span>
+        </div>
         <div className="h-72">
           <ResponsiveContainer width="100%" height="100%">
             <ComposedChart data={combinedData}>
