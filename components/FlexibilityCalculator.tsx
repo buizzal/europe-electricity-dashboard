@@ -1,6 +1,6 @@
 'use client'
 
-import React, { useState, useEffect } from 'react'
+import React, { useState, useEffect, useMemo } from 'react'
 import {
   BarChart,
   Bar,
@@ -12,7 +12,8 @@ import {
   Cell,
   Legend
 } from 'recharts'
-import { Calculator, Clock, Banknote, Leaf, Info, ArrowRight, Zap } from 'lucide-react'
+import { Calculator, Clock, Banknote, Leaf, Info, ArrowRight, Zap, CalendarDays } from 'lucide-react'
+import { format, parseISO, subDays, startOfDay, endOfDay } from 'date-fns'
 
 interface FlexibilityMetric {
   avgSavingsPerMWh: number
@@ -26,11 +27,29 @@ interface CarbonFlexibilityMetric {
   percentageOfAvgCarbon: number
 }
 
+interface HourlyPrice {
+  datetime: string
+  price: number
+}
+
+interface DailyPrice {
+  date: string
+  avgPrice: number
+  minPrice: number
+  maxPrice: number
+}
+
+interface CarbonData {
+  date: string
+  carbonIntensity: number
+}
+
 interface CountryData {
   iso3: string
   name: string
-  recentHourly: { datetime: string; price: number }[]
-  carbonIntensity: { date: string; carbonIntensity: number }[]
+  recentHourly: HourlyPrice[]
+  dailyPrices: DailyPrice[]
+  carbonIntensity: CarbonData[]
   flexibilityMetrics: {
     '1h': FlexibilityMetric
     '2h': FlexibilityMetric
@@ -58,6 +77,66 @@ interface HourlyCarbonData {
 interface FlexibilityCalculatorProps {
   countryCode: string
   hourlyCarbonData?: HourlyCarbonData[] // Optional hourly carbon data from live APIs
+}
+
+// Calculate price flexibility metrics for a given set of hourly data
+function calculatePriceFlexibility(hourlyData: HourlyPrice[]): {
+  '1h': FlexibilityMetric
+  '2h': FlexibilityMetric
+  '4h': FlexibilityMetric
+  '8h': FlexibilityMetric
+} | null {
+  if (hourlyData.length < 24) {
+    return null
+  }
+
+  const windows = [1, 2, 4, 8] as const
+  const results: Record<string, FlexibilityMetric> = {}
+
+  const avgPrice = hourlyData.reduce((s, p) => s + p.price, 0) / hourlyData.length
+
+  windows.forEach(window => {
+    let totalSavings = 0
+    let possibleShifts = 0
+
+    for (let i = 0; i < hourlyData.length - window; i++) {
+      const currentPrice = hourlyData[i].price
+
+      let minPrice = currentPrice
+      for (let j = 1; j <= window; j++) {
+        if (i + j < hourlyData.length) {
+          minPrice = Math.min(minPrice, hourlyData[i + j].price)
+        }
+      }
+
+      for (let j = 1; j <= window; j++) {
+        if (i - j >= 0) {
+          minPrice = Math.min(minPrice, hourlyData[i - j].price)
+        }
+      }
+
+      const savings = currentPrice - minPrice
+      if (savings > 0) {
+        totalSavings += savings
+        possibleShifts++
+      }
+    }
+
+    const avgSavings = possibleShifts > 0 ? totalSavings / hourlyData.length : 0
+
+    results[`${window}h`] = {
+      avgSavingsPerMWh: Math.round(avgSavings * 100) / 100,
+      savingsPerGWh: Math.round(avgSavings * 1000),
+      percentageOfAvgPrice: Math.round((avgSavings / avgPrice) * 10000) / 100
+    }
+  })
+
+  return results as {
+    '1h': FlexibilityMetric
+    '2h': FlexibilityMetric
+    '4h': FlexibilityMetric
+    '8h': FlexibilityMetric
+  }
 }
 
 // Calculate carbon flexibility metrics from hourly data (same algorithm as price)
@@ -137,6 +216,17 @@ export default function FlexibilityCalculator({ countryCode, hourlyCarbonData }:
   } | null>(null)
   const [carbonDataSource, setCarbonDataSource] = useState<'calculated' | 'estimated'>('estimated')
 
+  // Date range state - default to last 30 days
+  const [startDate, setStartDate] = useState<string>(() => {
+    const d = subDays(new Date(), 30)
+    return format(d, 'yyyy-MM-dd')
+  })
+  const [endDate, setEndDate] = useState<string>(() => {
+    return format(new Date(), 'yyyy-MM-dd')
+  })
+  const [livePriceData, setLivePriceData] = useState<HourlyPrice[]>([])
+  const [priceDataSource, setPriceDataSource] = useState<'static' | 'live' | 'hybrid'>('static')
+
   useEffect(() => {
     setLoading(true)
     fetch(`/data/${countryCode}.json`)
@@ -151,12 +241,23 @@ export default function FlexibilityCalculator({ countryCode, hourlyCarbonData }:
       })
   }, [countryCode])
 
-  // Fetch hourly carbon data for UK (NESO provides half-hourly data)
+  // Map ISO3 to Electricity Maps zones
+  const ISO3_TO_ZONE: { [key: string]: string } = {
+    'AUT': 'AT', 'BEL': 'BE', 'BGR': 'BG', 'CHE': 'CH', 'CZE': 'CZ',
+    'DEU': 'DE', 'DNK': 'DK-DK1', 'ESP': 'ES', 'EST': 'EE', 'FIN': 'FI',
+    'FRA': 'FR', 'GBR': 'GB', 'GRC': 'GR', 'HRV': 'HR', 'HUN': 'HU',
+    'IRL': 'IE', 'ITA': 'IT-NO', 'LTU': 'LT', 'LUX': 'LU', 'LVA': 'LV',
+    'MKD': 'MK', 'MNE': 'ME', 'NLD': 'NL', 'NOR': 'NO-NO1', 'POL': 'PL',
+    'PRT': 'PT', 'ROU': 'RO', 'SRB': 'RS', 'SVK': 'SK', 'SVN': 'SI',
+    'SWE': 'SE-SE1',
+  }
+
+  // Fetch hourly carbon data from available APIs
   useEffect(() => {
     const fetchHourlyCarbonData = async () => {
+      // For UK, use NESO API (free, no auth required, best data)
       if (countryCode === 'GBR') {
         try {
-          // Fetch last 48 hours of data from NESO
           const now = new Date()
           const twoDaysAgo = new Date(now.getTime() - 48 * 60 * 60 * 1000)
           const from = twoDaysAgo.toISOString()
@@ -166,7 +267,6 @@ export default function FlexibilityCalculator({ countryCode, hourlyCarbonData }:
           const result = await response.json()
 
           if (result.source === 'live' && result.data && result.data.length > 0) {
-            // Convert NESO data to our hourly format
             const hourlyData: HourlyCarbonData[] = result.data.map((item: {
               from: string
               intensity: { actual: number; forecast: number }
@@ -175,7 +275,6 @@ export default function FlexibilityCalculator({ countryCode, hourlyCarbonData }:
               carbonIntensity: item.intensity.actual || item.intensity.forecast
             }))
 
-            // Calculate carbon flexibility from the hourly data
             const metrics = calculateCarbonFlexibility(hourlyData)
             if (metrics) {
               setCalculatedCarbonMetrics(metrics)
@@ -184,7 +283,36 @@ export default function FlexibilityCalculator({ countryCode, hourlyCarbonData }:
             }
           }
         } catch (error) {
-          console.error('Error fetching hourly carbon data:', error)
+          console.error('Error fetching NESO hourly carbon data:', error)
+        }
+      }
+
+      // For other countries, try Electricity Maps API (free tier = 1 zone only)
+      const zone = ISO3_TO_ZONE[countryCode]
+      if (zone && countryCode !== 'GBR') {
+        try {
+          const response = await fetch(`/api/carbon-intensity?zone=${zone}&type=past-range`)
+          const result = await response.json()
+
+          if (result.source === 'live' && result.history && result.history.length > 0) {
+            // Convert Electricity Maps history data to our format
+            const hourlyData: HourlyCarbonData[] = result.history.map((item: {
+              datetime: string
+              carbonIntensity: number
+            }) => ({
+              datetime: item.datetime,
+              carbonIntensity: item.carbonIntensity
+            }))
+
+            const metrics = calculateCarbonFlexibility(hourlyData)
+            if (metrics) {
+              setCalculatedCarbonMetrics(metrics)
+              setCarbonDataSource('calculated')
+              return
+            }
+          }
+        } catch (error) {
+          console.error('Error fetching Electricity Maps hourly carbon data:', error)
         }
       }
 
@@ -214,6 +342,109 @@ export default function FlexibilityCalculator({ countryCode, hourlyCarbonData }:
     }
   }, [hourlyCarbonData])
 
+  // Fetch live price data from ENTSO-E for recent periods
+  useEffect(() => {
+    const fetchLivePrices = async () => {
+      // Only fetch live data if end date is within last 30 days
+      const endDateObj = parseISO(endDate)
+      const thirtyDaysAgo = subDays(new Date(), 30)
+
+      if (endDateObj > thirtyDaysAgo) {
+        try {
+          const response = await fetch(`/api/entsoe?country=${countryCode}&type=history`)
+          const result = await response.json()
+
+          if (result.source === 'live' && result.prices?.length > 0) {
+            setLivePriceData(result.prices)
+            setPriceDataSource('hybrid')
+          } else {
+            setLivePriceData([])
+            setPriceDataSource('static')
+          }
+        } catch (error) {
+          console.error('Error fetching live prices:', error)
+          setLivePriceData([])
+          setPriceDataSource('static')
+        }
+      } else {
+        setLivePriceData([])
+        setPriceDataSource('static')
+      }
+    }
+
+    if (data) {
+      fetchLivePrices()
+    }
+  }, [countryCode, data, endDate])
+
+  // Calculate price flexibility metrics based on selected date range
+  const dateRangePriceMetrics = useMemo(() => {
+    if (!data) return null
+
+    const start = parseISO(startDate)
+    const end = endOfDay(parseISO(endDate))
+
+    // Filter static hourly data by date range
+    const filteredStaticData = data.recentHourly.filter(h => {
+      const d = parseISO(h.datetime)
+      return d >= start && d <= end
+    })
+
+    // Combine with live data if available (for recent periods)
+    let combinedData = [...filteredStaticData]
+
+    if (livePriceData.length > 0) {
+      const livePricesInRange = livePriceData.filter(h => {
+        const d = parseISO(h.datetime)
+        return d >= start && d <= end
+      })
+
+      // Merge: prefer live data for overlapping timestamps
+      const liveTimestamps = new Set(livePricesInRange.map(p => p.datetime))
+      combinedData = [
+        ...filteredStaticData.filter(p => !liveTimestamps.has(p.datetime)),
+        ...livePricesInRange
+      ].sort((a, b) => a.datetime.localeCompare(b.datetime))
+    }
+
+    if (combinedData.length < 24) {
+      // Not enough hourly data, fall back to estimating from daily data
+      const filteredDailyData = data.dailyPrices.filter(d => {
+        const date = parseISO(d.date)
+        return date >= start && date <= end
+      })
+
+      if (filteredDailyData.length < 1) return null
+
+      // Estimate hourly flexibility from daily min/max spread
+      const avgSpread = filteredDailyData.reduce((s, d) => s + (d.maxPrice - d.minPrice), 0) / filteredDailyData.length
+      const avgPrice = filteredDailyData.reduce((s, d) => s + d.avgPrice, 0) / filteredDailyData.length
+
+      return {
+        '1h': { avgSavingsPerMWh: avgSpread * 0.15, savingsPerGWh: avgSpread * 150, percentageOfAvgPrice: (avgSpread * 0.15 / avgPrice) * 100 },
+        '2h': { avgSavingsPerMWh: avgSpread * 0.25, savingsPerGWh: avgSpread * 250, percentageOfAvgPrice: (avgSpread * 0.25 / avgPrice) * 100 },
+        '4h': { avgSavingsPerMWh: avgSpread * 0.40, savingsPerGWh: avgSpread * 400, percentageOfAvgPrice: (avgSpread * 0.40 / avgPrice) * 100 },
+        '8h': { avgSavingsPerMWh: avgSpread * 0.60, savingsPerGWh: avgSpread * 600, percentageOfAvgPrice: (avgSpread * 0.60 / avgPrice) * 100 },
+        isEstimated: true,
+        dataPoints: filteredDailyData.length,
+        avgPrice
+      }
+    }
+
+    // Calculate actual flexibility metrics from hourly data
+    const metrics = calculatePriceFlexibility(combinedData)
+    if (!metrics) return null
+
+    const avgPrice = combinedData.reduce((s, p) => s + p.price, 0) / combinedData.length
+
+    return {
+      ...metrics,
+      isEstimated: false,
+      dataPoints: combinedData.length,
+      avgPrice
+    }
+  }, [data, startDate, endDate, livePriceData])
+
   if (loading || !data) {
     return (
       <div className="card p-6">
@@ -225,22 +456,25 @@ export default function FlexibilityCalculator({ countryCode, hourlyCarbonData }:
     )
   }
 
-  if (!data.flexibilityMetrics) {
+  // Use date-range metrics if available, otherwise fall back to static
+  const priceMetrics = dateRangePriceMetrics || data.flexibilityMetrics
+
+  if (!priceMetrics) {
     return (
       <div className="card p-6">
         <p className="text-center text-slate-500">
-          Insufficient data to calculate flexibility metrics for this country.
+          Insufficient data to calculate flexibility metrics for this country and date range.
         </p>
       </div>
     )
   }
 
-  // Prepare chart data
+  // Prepare chart data using date-range specific metrics
   const chartData = [
-    { window: '1h', savings: data.flexibilityMetrics['1h'].avgSavingsPerMWh, percentage: data.flexibilityMetrics['1h'].percentageOfAvgPrice },
-    { window: '2h', savings: data.flexibilityMetrics['2h'].avgSavingsPerMWh, percentage: data.flexibilityMetrics['2h'].percentageOfAvgPrice },
-    { window: '4h', savings: data.flexibilityMetrics['4h'].avgSavingsPerMWh, percentage: data.flexibilityMetrics['4h'].percentageOfAvgPrice },
-    { window: '8h', savings: data.flexibilityMetrics['8h'].avgSavingsPerMWh, percentage: data.flexibilityMetrics['8h'].percentageOfAvgPrice },
+    { window: '1h', savings: priceMetrics['1h'].avgSavingsPerMWh, percentage: priceMetrics['1h'].percentageOfAvgPrice },
+    { window: '2h', savings: priceMetrics['2h'].avgSavingsPerMWh, percentage: priceMetrics['2h'].percentageOfAvgPrice },
+    { window: '4h', savings: priceMetrics['4h'].avgSavingsPerMWh, percentage: priceMetrics['4h'].percentageOfAvgPrice },
+    { window: '8h', savings: priceMetrics['8h'].avgSavingsPerMWh, percentage: priceMetrics['8h'].percentageOfAvgPrice },
   ]
 
   // Carbon savings calculation
@@ -268,7 +502,7 @@ export default function FlexibilityCalculator({ countryCode, hourlyCarbonData }:
     carbonPercentage = (currentCarbonSavings / avgCarbon) * 100
   }
 
-  const currentMetrics = data.flexibilityMetrics[selectedWindow]
+  const currentMetrics = priceMetrics[selectedWindow]
 
   // Calculate total savings based on load size
   const totalCostSavings = currentMetrics.avgSavingsPerMWh * loadSize * 1000 // Convert GWh to MWh
@@ -296,6 +530,69 @@ export default function FlexibilityCalculator({ countryCode, hourlyCarbonData }:
       </div>
 
       <div className="p-6">
+        {/* Date Range Selector */}
+        <div className="mb-6 p-4 bg-slate-50 rounded-lg border border-slate-200">
+          <div className="flex items-center gap-2 mb-3">
+            <CalendarDays className="w-4 h-4 text-slate-500" />
+            <label className="text-sm font-medium text-slate-700">Analysis Period</label>
+            <span className={`ml-auto text-xs px-2 py-1 rounded ${
+              priceDataSource === 'hybrid' ? 'bg-green-100 text-green-700' :
+              priceDataSource === 'live' ? 'bg-blue-100 text-blue-700' :
+              'bg-amber-100 text-amber-700'
+            }`}>
+              {priceDataSource === 'hybrid' ? '📊 Static + ⚡ Live API' :
+               priceDataSource === 'live' ? '⚡ Live API' : '📊 Static Data'}
+            </span>
+          </div>
+          <div className="flex flex-wrap items-center gap-4">
+            <div className="flex items-center gap-2">
+              <label className="text-xs text-slate-500">From:</label>
+              <input
+                type="date"
+                value={startDate}
+                onChange={(e) => setStartDate(e.target.value)}
+                min="2015-01-01"
+                max={endDate}
+                className="px-3 py-1.5 text-sm border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+              />
+            </div>
+            <div className="flex items-center gap-2">
+              <label className="text-xs text-slate-500">To:</label>
+              <input
+                type="date"
+                value={endDate}
+                onChange={(e) => setEndDate(e.target.value)}
+                min={startDate}
+                max={format(new Date(), 'yyyy-MM-dd')}
+                className="px-3 py-1.5 text-sm border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+              />
+            </div>
+            <div className="flex gap-2 ml-auto">
+              {[
+                { label: '7d', days: 7 },
+                { label: '30d', days: 30 },
+                { label: '90d', days: 90 },
+                { label: '1y', days: 365 },
+              ].map(({ label, days }) => (
+                <button
+                  key={label}
+                  onClick={() => {
+                    setEndDate(format(new Date(), 'yyyy-MM-dd'))
+                    setStartDate(format(subDays(new Date(), days), 'yyyy-MM-dd'))
+                  }}
+                  className="px-2 py-1 text-xs bg-white border border-slate-300 rounded hover:bg-slate-100 transition-colors"
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+          </div>
+          <p className="text-xs text-slate-400 mt-2 italic">
+            📊 Historical data: Jan 2015 – Feb 2026 (static CSV) | Recent data ({`<`}30 days): supplemented by ENTSO-E API when available
+            {dateRangePriceMetrics && ` | Using ${(dateRangePriceMetrics as { dataPoints?: number }).dataPoints || 0} data points`}
+          </p>
+        </div>
+
         {/* Input Controls */}
         <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-8">
           {/* Load Size Input */}
@@ -478,18 +775,22 @@ export default function FlexibilityCalculator({ countryCode, hourlyCarbonData }:
               <h4 className="font-semibold text-slate-800 mb-2">How Flexibility Value is Calculated</h4>
               <div className="text-sm text-slate-600 space-y-2">
                 <p>
-                  <strong>Cost Savings:</strong> For each hour, we calculate the potential savings from shifting
-                  consumption to the cheapest hour within the flexibility window. The average savings across
-                  all hours in the last 30 days gives the expected value of flexibility.
+                  <strong>Cost Savings:</strong> For each hour in the selected period ({format(parseISO(startDate), 'MMM d, yyyy')} – {format(parseISO(endDate), 'MMM d, yyyy')}),
+                  we calculate the potential savings from shifting consumption to the cheapest hour within the flexibility window.
+                  {(dateRangePriceMetrics as { isEstimated?: boolean })?.isEstimated
+                    ? ' (Estimated from daily price spreads due to limited hourly data for this period.)'
+                    : ` Based on ${(dateRangePriceMetrics as { dataPoints?: number })?.dataPoints || 0} hourly data points.`}
                 </p>
                 <p>
                   <strong>Carbon Savings:</strong> {carbonDataSource === 'calculated' ? (
-                    <>Calculated from hourly carbon intensity data{countryCode === 'GBR' ? ' (NESO API - last 48 hours)' : ''}.
+                    <>Calculated from hourly carbon intensity data
+                    {countryCode === 'GBR' ? ' (NESO API - last 48 hours)' : ' (Electricity Maps API - last 48 hours)'}.
                     We find the potential emissions reduction from shifting consumption to the lowest-carbon hour
                     within the flexibility window, using the same methodology as cost savings.</>
                   ) : (
                     <>Estimated based on typical daily variation patterns (~15% peak-to-trough). Countries with
-                    live hourly carbon data (e.g., UK via NESO) show calculated values instead of estimates.</>
+                    live hourly carbon data (UK via NESO, or your configured Electricity Maps zone) show
+                    calculated values instead of estimates.</>
                   )}
                 </p>
                 <p className="flex items-center gap-2 text-blue-600 font-medium">

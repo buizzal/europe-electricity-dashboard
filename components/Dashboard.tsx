@@ -101,11 +101,25 @@ const ISO3_TO_ZONE: { [key: string]: string } = {
   'SWE': 'SE-SE1',
 }
 
+interface LivePriceData {
+  source: 'live' | 'static' | 'error'
+  api?: string
+  prices?: HourlyData[]
+  stats?: {
+    currentPrice: number
+    avgPrice: number
+    minPrice: number
+    maxPrice: number
+  }
+  fetchedAt?: string
+}
+
 export default function Dashboard({ countryCode }: DashboardProps) {
   const [data, setData] = useState<CountryData | null>(null)
   const [loading, setLoading] = useState(true)
   const [timeRange, setTimeRange] = useState<'7d' | '30d' | '90d' | '365d'>('30d')
   const [liveCarbon, setLiveCarbon] = useState<LiveCarbonData | null>(null)
+  const [livePrices, setLivePrices] = useState<LivePriceData | null>(null)
   const [dataSource, setDataSource] = useState<DataSourceInfo>({
     priceSource: 'static',
     carbonSource: 'static',
@@ -133,6 +147,40 @@ export default function Dashboard({ countryCode }: DashboardProps) {
         console.error('Error loading country data:', err)
         setLoading(false)
       })
+  }, [countryCode])
+
+  // Fetch live price data from ENTSO-E
+  useEffect(() => {
+    const fetchLivePrices = async () => {
+      try {
+        const response = await fetch(`/api/entsoe?country=${countryCode}&type=dayahead`)
+        const result = await response.json()
+
+        if (result.source === 'live' && result.prices?.length > 0) {
+          setLivePrices({
+            source: 'live',
+            api: 'ENTSO-E',
+            prices: result.prices,
+            stats: result.stats,
+            fetchedAt: result.fetchedAt,
+          })
+          setDataSource(prev => ({
+            ...prev,
+            priceSource: 'live',
+            priceApi: 'ENTSO-E',
+            priceDataType: 'real-time',
+            priceFetchedAt: result.fetchedAt,
+          }))
+        } else {
+          setDataSource(prev => ({ ...prev, priceSource: 'static', priceDataType: 'historical' }))
+        }
+      } catch (error) {
+        console.error('Error fetching ENTSO-E prices:', error)
+        setDataSource(prev => ({ ...prev, priceSource: 'static', priceDataType: 'historical' }))
+      }
+    }
+
+    fetchLivePrices()
   }, [countryCode])
 
   // Fetch live carbon intensity data
@@ -203,6 +251,29 @@ export default function Dashboard({ countryCode }: DashboardProps) {
 
   const handleRefresh = async () => {
     setRefreshing(true)
+
+    // Refresh live price data from ENTSO-E
+    try {
+      const priceResponse = await fetch(`/api/entsoe?country=${countryCode}&type=dayahead`)
+      const priceResult = await priceResponse.json()
+      if (priceResult.source === 'live' && priceResult.prices?.length > 0) {
+        setLivePrices({
+          source: 'live',
+          api: 'ENTSO-E',
+          prices: priceResult.prices,
+          stats: priceResult.stats,
+          fetchedAt: priceResult.fetchedAt,
+        })
+        setDataSource(prev => ({
+          ...prev,
+          priceSource: 'live',
+          priceApi: 'ENTSO-E',
+          priceFetchedAt: priceResult.fetchedAt,
+        }))
+      }
+    } catch (error) {
+      console.error('Error refreshing prices:', error)
+    }
 
     // Refresh live carbon data
     if (countryCode === 'GBR') {
@@ -291,8 +362,12 @@ export default function Dashboard({ countryCode }: DashboardProps) {
     }
   })
 
-  // Format hourly data for the chart
-  const hourlyChartData = data.recentHourly.map(h => ({
+  // Format hourly data for the chart - use live prices if available
+  const hourlyPriceData = livePrices?.prices && livePrices.prices.length > 0
+    ? livePrices.prices
+    : data.recentHourly
+
+  const hourlyChartData = hourlyPriceData.map(h => ({
     datetime: h.datetime,
     hour: format(parseISO(h.datetime), 'HH:mm'),
     day: format(parseISO(h.datetime), 'MMM d'),
@@ -300,9 +375,11 @@ export default function Dashboard({ countryCode }: DashboardProps) {
   }))
 
   // Calculate current stats - use live data if available
-  const currentPrice = data.recentHourly.length > 0
-    ? data.recentHourly[data.recentHourly.length - 1].price
-    : null
+  const currentPrice = livePrices?.stats?.currentPrice ?? (
+    data.recentHourly.length > 0
+      ? data.recentHourly[data.recentHourly.length - 1].price
+      : null
+  )
 
   const currentCarbon = liveCarbon?.carbonIntensity ?? (
     data.carbonIntensity.length > 0
@@ -311,8 +388,9 @@ export default function Dashboard({ countryCode }: DashboardProps) {
   )
 
   // Calculate 24h price change
-  const price24hAgo = data.recentHourly.length > 24
-    ? data.recentHourly[data.recentHourly.length - 25]?.price
+  const priceDataForChange = livePrices?.prices || data.recentHourly
+  const price24hAgo = priceDataForChange.length > 24
+    ? priceDataForChange[priceDataForChange.length - 25]?.price
     : null
   const priceChange = currentPrice && price24hAgo
     ? ((currentPrice - price24hAgo) / price24hAgo * 100)
@@ -412,7 +490,10 @@ export default function Dashboard({ countryCode }: DashboardProps) {
 
           {/* Last Updated Timestamps */}
           {(dataSource.carbonFetchedAt || dataSource.priceFetchedAt) && (
-            <div className="mt-2 text-xs text-slate-400">
+            <div className="mt-2 text-xs text-slate-400 flex flex-wrap gap-4">
+              {dataSource.priceFetchedAt && dataSource.priceSource === 'live' && (
+                <span>Prices updated: {format(parseISO(dataSource.priceFetchedAt), 'MMM d, HH:mm:ss')}</span>
+              )}
               {dataSource.carbonFetchedAt && dataSource.carbonSource === 'live' && (
                 <span>Carbon updated: {format(parseISO(dataSource.carbonFetchedAt), 'MMM d, HH:mm:ss')}</span>
               )}
@@ -485,9 +566,15 @@ export default function Dashboard({ countryCode }: DashboardProps) {
         <div className="flex items-center justify-between mb-4">
           <div className="flex items-center gap-2">
             <Calendar className="w-5 h-5 text-blue-500" />
-            <h3 className="text-lg font-semibold text-slate-800">Hourly Prices (Last 7 Days)</h3>
+            <h3 className="text-lg font-semibold text-slate-800">
+              Hourly Prices {livePrices?.source === 'live' ? '(Day-Ahead)' : '(Last 7 Days)'}
+            </h3>
           </div>
-          <span className="text-xs px-2 py-1 rounded bg-amber-100 text-amber-700">📊 Historical</span>
+          <span className={`text-xs px-2 py-1 rounded ${
+            dataSource.priceSource === 'live' ? 'bg-green-100 text-green-700' : 'bg-amber-100 text-amber-700'
+          }`}>
+            {dataSource.priceSource === 'live' ? '⚡ Real-time (ENTSO-E)' : '📊 Historical'}
+          </span>
         </div>
         <div className="h-64">
           <ResponsiveContainer width="100%" height="100%">
@@ -536,6 +623,11 @@ export default function Dashboard({ countryCode }: DashboardProps) {
             </AreaChart>
           </ResponsiveContainer>
         </div>
+        <p className="text-xs text-slate-400 mt-2 italic">
+          📊 Data source: {dataSource.priceSource === 'live'
+            ? 'Live day-ahead prices from ENTSO-E API'
+            : 'Historical data from static dataset (Jan 2015 – Feb 2026)'}
+        </p>
       </div>
 
       {/* Carbon Intensity Chart (Last 7 Days) */}
@@ -607,6 +699,11 @@ export default function Dashboard({ countryCode }: DashboardProps) {
             </AreaChart>
           </ResponsiveContainer>
         </div>
+        <p className="text-xs text-slate-400 mt-2 italic">
+          📊 Data source: {dataSource.carbonSource === 'live'
+            ? `Live data from ${dataSource.carbonApi} API`
+            : 'Historical data from static dataset (Jan 2015 – Dec 2024)'}
+        </p>
       </div>
 
       {/* Combined Daily Chart */}
@@ -704,6 +801,10 @@ export default function Dashboard({ countryCode }: DashboardProps) {
             </ComposedChart>
           </ResponsiveContainer>
         </div>
+        <p className="text-xs text-slate-400 mt-2 italic">
+          📊 Data source: Historical data from static datasets. Prices: Jan 2015 – Feb 2026 | Carbon: Jan 2015 – Dec 2024.
+          Recent data ({`<`}30 days) supplemented by live APIs when available.
+        </p>
       </div>
     </div>
   )
